@@ -930,7 +930,8 @@ class ColorEditor(object):
     """Окно «Цвета по рабочим наборам»: модели слева, РБ выбранной модели справа."""
 
     NAMES = ('sources_list', 'source_title', 'source_hint', 'search_box', 'all_on_button',
-             'all_off_button', 'rows_panel', 'param_box', 'ok_button')
+             'all_off_button', 'rows_panel', 'param_box', 'ok_button', 'show_all_box')
+    PREFIX = u'2_'   # красим только рабочие наборы раздела (2_…), 0_ и 1_ — связи и служебные
 
     def __init__(self, info, colors, owner_hwnd):
         self.win = _load_xaml('vm_colors.xaml')
@@ -946,10 +947,11 @@ class ColorEditor(object):
         self.sources = [(u'Эта модель', 'own', info['own'])]
         for link in info['links']:
             self.sources.append((link['title'], 'link', link['worksets']))
-        for title, scope, names in self.sources:
-            on = sum(1 for n in names if self.items.get((scope, n), {}).get('enabled'))
-            self.sources_list.Items.Add(u'{0}   ({1}/{2})'.format(title, on, len(names)))
+        for _ in self.sources:
+            self.sources_list.Items.Add(u'')
+        self.update_source_counts()
         self.sources_list.SelectionChanged += self.on_source
+        self.show_all_box.Click += self.on_show_all
         self.search_box.TextChanged += self.on_search
         self.all_on_button.Click += self._bulk(True)
         self.all_off_button.Click += self._bulk(False)
@@ -960,9 +962,21 @@ class ColorEditor(object):
         self.win.ShowDialog()
         return self.result
 
+    def visible_names(self, names):
+        if self.show_all_box.IsChecked:
+            return names
+        return [n for n in names if n.startswith(self.PREFIX)]
+
+    def on_show_all(self, sender, args):
+        self.update_source_counts()
+        self.render()
+
     def current(self):
         i = self.sources_list.SelectedIndex
-        return self.sources[i] if i >= 0 else None
+        if i < 0:
+            return None
+        title, scope, names = self.sources[i]
+        return title, scope, self.visible_names(names)
 
     def item(self, scope, name, create=False):
         key = (scope, name)
@@ -975,6 +989,7 @@ class ColorEditor(object):
     def update_source_counts(self):
         index = self.sources_list.SelectedIndex
         for i, (title, scope, names) in enumerate(self.sources):
+            names = self.visible_names(names)
             on = sum(1 for n in names if (self.items.get((scope, n)) or {}).get('enabled'))
             text = u'{0}   ({1}/{2})'.format(title, on, len(names))
             if self.sources_list.Items[i] != text:
@@ -1003,7 +1018,9 @@ class ColorEditor(object):
             self.source_hint.Text = (u'Рабочие наборы внутри связи. Цвет РБ общий для всех связей, '
                                      u'где есть РБ с таким именем.')
         if not names:
-            self.rows_panel.Children.Add(_text(u'В модели нет рабочих наборов.', gray=True))
+            self.rows_panel.Children.Add(_text(
+                u'Нет рабочих наборов с префиксом 2_. Отметьте «Показать все РБ», если нужны другие.',
+                gray=True))
             return
         for name in names:
             if _matches(name, self.search_box.Text):

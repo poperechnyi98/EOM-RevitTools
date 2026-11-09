@@ -5,10 +5,13 @@
         Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
   <DockPanel Margin="10">
     <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
-      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock Text="Параметр для различения общих РБ:" VerticalAlignment="Center" Margin="0,0,6,0"/>
-        <TextBox x:Name="param_box" Width="180" VerticalContentAlignment="Center"
-                 ToolTip="У наших элементов он заполнен, у элементов смежников — пуст. Нужен только для РБ, которые есть и у нас, и в связях."/>
+      <StackPanel DockPanel.Dock="Left" MaxWidth="560">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="Одинаковые РБ у нас и в связях различать по параметру:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+          <TextBox x:Name="param_box" Width="150" VerticalContentAlignment="Center"/>
+        </StackPanel>
+        <TextBlock Foreground="Gray" TextWrapping="Wrap" FontSize="11" Margin="0,3,0,0"
+                   Text="Это имя вашего параметра элементов: у наших элементов он заполнен, у элементов связей — пуст. Настраивать ничего не нужно, если параметр называется так. Нужен только для РБ, которые есть и у нас, и в связях (помечены оранжевым)."/>
       </StackPanel>
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
         <Button x:Name="ok_button" Content="OK" Width="90" Padding="0,3" Margin="0,0,6,0" IsDefault="True"/>
@@ -29,6 +32,9 @@
         <StackPanel DockPanel.Dock="Top">
           <TextBlock x:Name="source_title" FontWeight="Bold" TextWrapping="Wrap"/>
           <TextBlock x:Name="source_hint" Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,6"/>
+          <CheckBox x:Name="show_all_box" Margin="0,0,0,6">
+            <TextBlock Text="Показать все РБ (по умолчанию только с префиксом 2_)"/>
+          </CheckBox>
           <DockPanel Margin="0,0,0,6">
             <Button x:Name="all_on_button" DockPanel.Dock="Right" Content="Красить найденные" Padding="6,2" Margin="4,0,0,0"/>
             <Button x:Name="all_off_button" DockPanel.Dock="Right" Content="Не красить найденные" Padding="6,2" Margin="4,0,0,0"/>
