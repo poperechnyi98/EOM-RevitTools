@@ -25,5 +25,5 @@ This is a pyRevit extension for Autodesk Revit, distributed from GitHub (`popere
 ## Development workflow (author's PC)
 
 - This working copy (`Desktop\Игрушки с ИИ\Плагин\Claude`) is what pyRevit loads on the author's PC: `%APPDATA%\pyRevit\Extensions\EOM-RevitTools.extension` is a directory junction to it. The original pyRevit clone was kept as `EOM-RevitTools.backup-appdata` in the same folder.
-- Edit files here directly; do not touch the AppData folder. The author tests local changes with pyRevit → Reload (the Обновить button only downloads from GitHub). Script changes in existing buttons apply on the next click; new buttons/panels need a reload, and correct panel order only after a Revit restart.
+- Edit files here directly; do not touch the AppData folder. The author tests local changes with pyRevit → Reload (the Обновить button only downloads from GitHub). Script changes in existing buttons apply on the next click. New buttons/panels: with the pyRevit 6 new loader a Reload can create the ribbon button without its command class ("class not found" on click) — tell the author to restart Revit after adding a button.
 - Work on the `dev` branch. When the author confirms a change works in Revit, merge it into `main` and push — colleagues then get it via the Обновить button.
