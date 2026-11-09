@@ -58,9 +58,15 @@ def main():
 
     after = short_message(updated)
     if updated.last_commit_hash == repo_info.last_commit_hash:
-        forms.alert(
-            u'Обновлений нет, установлена последняя версия.\n\n{}'.format(after),
-            title=u'Обновление EOM-RevitTools')
+        # Файлы могли измениться в папке расширения и без скачивания
+        # (локальная разработка) — предлагаем перечитать их в ленту.
+        if forms.alert(
+                u'Обновлений нет, установлена последняя версия.\n\n{}\n\n'
+                u'Перезагрузить pyRevit, чтобы подхватить изменения '
+                u'в папке расширения?'.format(after),
+                title=u'Обновление EOM-RevitTools', yes=True, no=True):
+            from pyrevit.loader import sessionmgr
+            sessionmgr.reload_pyrevit()
         return
 
     forms.alert(

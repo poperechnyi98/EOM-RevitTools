@@ -15,3 +15,9 @@ This is a pyRevit extension for Autodesk Revit, distributed from GitHub (`popere
 - Shared code lives in `lib/eomtools` (pyRevit puts the extension's `lib` folder on `sys.path`; import as `from eomtools import ...`).
 - Buttons marked as ported from LowLife (github.com/avpersiyanov-afk/LowLife, MIT) use `lib/eomtools`. Keep `lib/eomtools/LICENSE-LowLife.txt`. Local settings files are named `EOM*_settings.json`; model-facing identifiers (Extensible Storage schema GUIDs/names, shared parameter GUIDs and group "LowLife", updater GUID) were deliberately kept identical to LowLife for compatibility with models it already processed — do not change them.
 - Push to `main` only changes that were tested in Revit: pyRevit → Update delivers `main` to every user immediately. Use a separate branch for work in progress.
+
+## Development workflow (author's PC)
+
+- This working copy (`Desktop\Игрушки с ИИ\Плагин\Claude`) is what pyRevit loads on the author's PC: `%APPDATA%\pyRevit\Extensions\EOM-RevitTools.extension` is a directory junction to it. The original pyRevit clone was kept as `EOM-RevitTools.backup-appdata` in the same folder.
+- Edit files here directly; do not touch the AppData folder. The author tests with MyRvtTools → Сервис → Обновить (offers a pyRevit reload when there is nothing to download) or pyRevit → Reload. Script changes in existing buttons apply on the next click; new buttons/panels need a reload, and correct panel order only after a Revit restart.
+- Work on the `dev` branch. When the author confirms a change works in Revit, merge it into `main` and push — colleagues then get it via the Обновить button.
