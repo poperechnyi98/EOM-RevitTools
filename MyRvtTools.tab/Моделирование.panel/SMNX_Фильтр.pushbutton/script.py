@@ -2,45 +2,40 @@
 """Заполнить параметр SMNX_Фильтр у всех элементов модели, у которых он есть.
 
 Нужен для фильтров видов и вкладки «Цвета» View Manager: у наших элементов
-SMNX_Фильтр заполнен (например, «ЭОМ»), у элементов смежников — пуст.
+SMNX_Фильтр заполнен (например, «ЭОМ»), у элементов смежников его нет.
 
-Перед записью показывает, сколько элементов изменится, и спрашивает подтверждение.
-Одна транзакция — отменяется Ctrl+Z. Элементы, занятые другими пользователями,
-пропускаются.
+Одно окно: значение, режим (только пустые / перезаписать) и живой подсчёт,
+сколько элементов изменится. Одна транзакция — отменяется Ctrl+Z. Элементы,
+занятые другими пользователями, пропускаются.
 """
-from pyrevit import forms, revit, script
+import io
+import os
+import uuid
+
+import clr
+clr.AddReference('PresentationFramework')
+clr.AddReference('PresentationCore')
+clr.AddReference('WindowsBase')
+from System.Windows.Interop import WindowInteropHelper
+from System.Windows.Markup import XamlReader
+
+from pyrevit import HOST_APP, forms, revit, script
 
 from Autodesk.Revit.DB import (CheckoutStatus, FailureProcessingResult, FailureSeverity,
                                FilteredElementCollector, IFailuresPreprocessor, StorageType,
                                Transaction, TransactionStatus, WorksharingUtils)
 
 PARAM = u'SMNX_Фильтр'
+DEFAULT_VALUE = u'ЭОМ'
 doc = revit.doc
-out = script.get_output()
 
 if doc.IsFamilyDocument:
     forms.alert(u'Откройте модель проекта, а не семейство.', exitscript=True)
 if doc.IsReadOnly:
     forms.alert(u'Модель открыта только для чтения.', exitscript=True)
 
-value = forms.ask_for_string(default=u'ЭОМ', title=PARAM,
-                             prompt=u'Значение параметра {0} для элементов модели:'.format(PARAM))
-if value is None:
-    script.exit()
-value = value.strip()
-if not value:
-    forms.alert(u'Значение пустое — нечего записывать.', exitscript=True)
-
-ONLY_EMPTY = u'Заполнить только пустые'
-OVERWRITE = u'Перезаписать у всех'
-mode = forms.CommandSwitchWindow.show(
-    [ONLY_EMPTY, OVERWRITE],
-    message=u'«{0}» → {1}. Что делать с элементами, где параметр уже заполнен?'.format(value, PARAM))
-if not mode:
-    script.exit()
-
-# ---------- что будем менять ----------
-todo, same, filled_other, busy, read_only = [], 0, 0, 0, 0
+# ---------- что есть в модели (один проход) ----------
+writable, busy, read_only = [], 0, 0      # writable: [(параметр, текущее значение)]
 for el in FilteredElementCollector(doc).WhereElementIsNotElementType():
     p = el.LookupParameter(PARAM)
     if p is None or p.StorageType != StorageType.String:
@@ -48,37 +43,90 @@ for el in FilteredElementCollector(doc).WhereElementIsNotElementType():
     if p.IsReadOnly:
         read_only += 1
         continue
-    current = p.AsString() or u''
-    if current == value:
-        same += 1
-        continue
-    if current and mode == ONLY_EMPTY:
-        filled_other += 1
-        continue
     if doc.IsWorkshared and \
             WorksharingUtils.GetCheckoutStatus(doc, el.Id) == CheckoutStatus.OwnedByOtherUser:
         busy += 1
         continue
-    todo.append(p)
+    writable.append((p, p.AsString() or u''))
 
-summary = [u'Будет записано «{0}»: {1} эл.'.format(value, len(todo)),
-           u'Уже «{0}»: {1}'.format(value, same)]
-if filled_other:
-    summary.append(u'Заполнено другим значением (не трогаю): {0}'.format(filled_other))
-if busy:
-    summary.append(u'Заняты другими пользователями (пропуск): {0}'.format(busy))
-if read_only:
-    summary.append(u'Параметр только для чтения (пропуск): {0}'.format(read_only))
+if not writable and not busy:
+    forms.alert(u'В модели нет элементов с параметром {0}.'.format(PARAM), exitscript=True)
 
-if not todo:
-    forms.alert(u'\n'.join(summary) + u'\n\nМенять нечего.', title=PARAM, exitscript=True)
-if not forms.alert(u'\n'.join(summary) + u'\n\nЗаписать?', title=PARAM, yes=True, no=True):
+
+def plan(value, overwrite):
+    """(к записи [параметры], уже с этим значением, заполнено другим)"""
+    todo, same, other = [], 0, 0
+    for p, current in writable:
+        if current == value:
+            same += 1
+        elif current and not overwrite:
+            other += 1
+        else:
+            todo.append(p)
+    return todo, same, other
+
+
+# ---------- окно ----------
+here = os.path.dirname(__file__)
+with io.open(os.path.join(here, 'dialog.xaml'), 'r', encoding='utf-8') as f:
+    win = XamlReader.Parse(f.read())
+try:
+    WindowInteropHelper(win).Owner = HOST_APP.uiapp.MainWindowHandle
+except Exception:
+    pass
+value_box = win.FindName('value_box')
+overwrite_radio = win.FindName('overwrite_radio')
+only_empty_radio = win.FindName('only_empty_radio')
+todo_label = win.FindName('todo_label')
+details_label = win.FindName('details_label')
+ok_button = win.FindName('ok_button')
+state = {'accepted': False}
+
+
+def update(*_):
+    value = (value_box.Text or u'').strip()
+    overwrite = bool(overwrite_radio.IsChecked)
+    todo, same, other = plan(value, overwrite)
+    ok_button.IsEnabled = bool(value) and bool(todo)
+    if not value:
+        todo_label.Text = u'Введите значение'
+    else:
+        todo_label.Text = u'Будет записано: {0}'.format(len(todo))
+    lines = [u'Элементов с параметром: {0}'.format(len(writable) + busy + read_only),
+             u'Уже «{0}»: {1}'.format(value, same)]
+    if other:
+        lines.append(u'Заполнено другим значением: {0} — {1}'.format(
+            other, u'перезапишутся' if overwrite else u'не трогаю'))
+    if busy:
+        lines.append(u'Заняты другими пользователями: {0} — пропуск'.format(busy))
+    if read_only:
+        lines.append(u'Только для чтения: {0} — пропуск'.format(read_only))
+    details_label.Text = u'\n'.join(lines)
+
+
+def accept(sender, args):
+    state['accepted'] = True
+    win.DialogResult = True
+
+
+value_box.Text = DEFAULT_VALUE
+value_box.TextChanged += update
+overwrite_radio.Checked += update
+only_empty_radio.Checked += update
+ok_button.Click += accept
+update()
+value_box.Focus()
+value_box.SelectAll()
+win.ShowDialog()
+
+if not state['accepted']:
     script.exit()
 
+value = value_box.Text.strip()
+todo, same, other = plan(value, bool(overwrite_radio.IsChecked))
 
-import uuid
 
-
+# ---------- запись ----------
 class _SkipWarnings(IFailuresPreprocessor):
     """Предупреждения (например, про группы) не прерывают запись; ошибки — откат."""
     __namespace__ = 'EOM.SmnxFilter.N' + uuid.uuid4().hex
@@ -116,7 +164,7 @@ except Exception as exc:
 if status != TransactionStatus.Committed:
     forms.alert(u'Revit отклонил изменение, ничего не изменено.', title=PARAM, exitscript=True)
 
-msg = u'Записано: {0}.'.format(written)
+msg = u'{0} = «{1}» записано: {2}.'.format(PARAM, value, written)
 if failed:
-    msg += u' Не удалось записать: {0}.'.format(failed)
-forms.alert(msg + u'\n\n' + u'\n'.join(summary[1:]), title=PARAM)
+    msg += u' Не удалось: {0}.'.format(failed)
+forms.alert(msg, title=PARAM)

@@ -135,8 +135,12 @@ def _overrides(item, solid_id):
     r, g, b = item['color']
     color = Color(r, g, b)
     ogs = OverrideGraphicSettings()
-    ogs.SetProjectionLineColor(color)
-    ogs.SetCutLineColor(color)
+    # линии — чёрные и тонкие, чтобы элементы не сливались; цветом — только заливка
+    black = Color(0, 0, 0)
+    ogs.SetProjectionLineColor(black)
+    ogs.SetCutLineColor(black)
+    ogs.SetProjectionLineWeight(1)
+    ogs.SetCutLineWeight(1)
     if solid_id is not None:
         ogs.SetSurfaceForegroundPatternId(solid_id)
         ogs.SetSurfaceForegroundPatternColor(color)
