@@ -156,6 +156,41 @@ def applied_count(doc, view):
     return len(_our_filters(doc, owner))
 
 
+def view_state(doc, view):
+    """{имя фильтра 3_ВСЕ_РБ_: включён ли он} на виде (или в его шаблоне)."""
+    tg = vm_revit.targets(doc, view)['filters']
+    owner = tg['template'] if tg['controlled'] else view
+    return dict((name, owner.GetIsFilterEnabled(fid))
+                for name, fid in _our_filters(doc, owner).items())
+
+
+def _applied_filter(doc, view, item, allow_template):
+    owner = vm_revit._owner(doc, view, vm_revit.targets(doc, view)['filters'], 'filters',
+                            allow_template)
+    name = filter_name(item, shared_names(scan(doc)))
+    fid = _our_filters(doc, owner).get(name)
+    return owner, name, fid
+
+
+def set_enabled(doc, view, item, enabled, allow_template, label):
+    """Включить/выключить фильтр РБ на виде. Возвращает False, если фильтр не применён."""
+    owner, name, fid = _applied_filter(doc, view, item, allow_template)
+    if fid is None:
+        return False
+    vm_revit._run(doc, label, lambda: owner.SetIsFilterEnabled(fid, enabled))
+    return True
+
+
+def update_one(doc, view, item, allow_template, label):
+    """Обновить цвет/прозрачность фильтра РБ на виде. False — фильтр ещё не применён."""
+    owner, name, fid = _applied_filter(doc, view, item, allow_template)
+    if fid is None:
+        return False
+    ogs = _overrides(item, _solid_fill(doc))
+    vm_revit._run(doc, label, lambda: owner.SetFilterOverrides(fid, ogs))
+    return True
+
+
 def apply(doc, view, colors, allow_template, label):
     """Создать/обновить фильтры схемы и привести к ней вид (или шаблон).
 

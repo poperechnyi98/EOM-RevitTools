@@ -263,7 +263,7 @@ class Controller(object):
                 try:
                     self.color_info = vm_colors.scan(self.doc)
                     if self.snap['supported']:
-                        self.colors_applied = vm_colors.applied_count(self.doc, view)
+                        self.colors_applied = vm_colors.view_state(self.doc, view)
                 except Exception:
                     pass
         self.render()
@@ -308,6 +308,22 @@ class Controller(object):
                 self.refresh(uiapp)
                 self.status(u'Цвета применены: фильтров {0}.'.format(applied) +
                             (u' Снято лишних: {0}.'.format(removed) if removed else u''))
+                return
+            if kind in ('colors_toggle', 'colors_update'):
+                item = self.profile['colors']['items'][p['index']]
+                if kind == 'colors_toggle':
+                    done = vm_colors.set_enabled(
+                        doc, uidoc.ActiveView, item, p['on'], allow,
+                        u'{0} — {1}'.format(item['name'], u'On' if p['on'] else u'Off'))
+                else:
+                    done = vm_colors.update_one(doc, uidoc.ActiveView, item, allow,
+                                                u'цвет {0}'.format(item['name']))
+                self.refresh(uiapp)
+                if not done:
+                    self.status(u'Фильтра «{0}» на виде ещё нет — изменение сохранено в схеме, '
+                                u'на вид попадёт по «Применить».'.format(item['name']))
+                else:
+                    self.status(u'Готово: {0}.'.format(item['name']))
                 return
             if kind == 'colors_clear':
                 removed = vm_colors.clear(doc, uidoc.ActiveView, allow, u'снять цвета по РБ')
@@ -692,51 +708,115 @@ class Controller(object):
         panel = self.colors_panel
         panel.Children.Clear()
         colors = self.profile['colors']
-        enabled = [i for i in colors['items'] if i['enabled']]
         info = self.color_info
         own = set(info['own']) if info else set()
         linked = set()
         if info:
             for link in info['links']:
                 linked.update(link['worksets'])
-        applied = self.colors_applied
-        state = u'В схеме РБ: {0}.'.format(len(enabled))
-        if applied is not None:
-            state += u' На виде фильтров 3_ВСЕ_РБ_: {0}.'.format(applied)
-        state += u' Изменения схемы попадают на вид после «Применить».'
-        self.colors_state_label.Text = state
-        if not enabled:
+        shared = vm_colors.shared_names(info) if info else set()
+        on_view = self.colors_applied            # {имя фильтра: включён} или None
+        indexed = [(i, it) for i, it in enumerate(colors['items']) if it['enabled']]
+        state = u'В схеме РБ: {0}.'.format(len(indexed))
+        if on_view is not None:
+            state += u' На виде фильтров: {0}.'.format(len(on_view))
+        self.colors_state_label.Text = state + (u' Плитка — вкл/выкл фильтра, квадрат — цвет, '
+                                                u'ползунок — прозрачность.')
+        if not indexed:
             panel.Children.Add(_text(u'Схема пуста — нажмите ⚙ и выберите цвета рабочих наборов.',
                                      gray=True))
             return
         for scope, title, present in (('own', u'Наша модель', own), ('link', u'В связях', linked)):
-            rows = [i for i in enabled if i['scope'] == scope]
+            rows = [(i, it) for i, it in indexed if it['scope'] == scope]
             if not rows:
                 continue
             header = _text(title)
             header.FontWeight = FontWeights.Bold
             header.Margin = Thickness(0, 4, 0, 2)
             panel.Children.Add(header)
-            for it in rows:
-                line = StackPanel()
-                line.Orientation = Orientation.Horizontal
-                line.Margin = Thickness(0, 1, 0, 1)
-                sw = Border()
-                sw.Width = sw.Height = 14
-                sw.CornerRadius = CornerRadius(2)
-                sw.BorderBrush = Brushes.Gray
-                sw.BorderThickness = Thickness(1)
-                sw.Background = SolidColorBrush(Color.FromRgb(*it['color']))
-                sw.Margin = Thickness(0, 0, 6, 0)
-                line.Children.Add(sw)
-                text = it['name']
-                if it['transparency']:
-                    text += u'   · прозр. {0} %'.format(it['transparency'])
-                label = _text(text, gray=bool(info) and it['name'] not in present)
-                if info and it['name'] not in present:
-                    label.Text += u'   (нет в этой модели)'
-                line.Children.Add(label)
-                panel.Children.Add(line)
+            for index, it in rows:
+                panel.Children.Add(self.color_row(index, it, present, shared, on_view))
+
+    def color_row(self, index, it, present, shared, on_view):
+        grid = Grid()
+        grid.Margin = Thickness(0, 1, 0, 1)
+        for width in (GridLength(1, GridUnitType.Star), GridLength(30), GridLength(70),
+                      GridLength(38)):
+            col = ColumnDefinition()
+            col.Width = width
+            grid.ColumnDefinitions.Add(col)
+        caption = vm_profile.short_workset_name(it['name'], self.profile['workset_names'])
+        fname = vm_colors.filter_name(it, shared)
+        if self.color_info and it['name'] not in present:
+            state, tip = 'none', u'{0}\nТакого РБ нет в этой модели.'.format(it['name'])
+        elif on_view is None or fname not in on_view:
+            state, tip = 'none', u'{0}\nФильтра на виде нет — нажмите «Применить».'.format(it['name'])
+        else:
+            state = 'on' if on_view[fname] else 'off'
+            tip = u'{0}\nФильтр {1}: {2}. Нажмите, чтобы {3}.'.format(
+                it['name'], fname, u'включён' if on_view[fname] else u'выключен',
+                u'выключить' if on_view[fname] else u'включить')
+        tile = self.tile(caption, state, tip, (index, state), self.on_color_tile)
+        swatch = Button()
+        swatch.Style = self.tile_style
+        swatch.Background = SolidColorBrush(Color.FromRgb(*it['color']))
+        swatch.BorderBrush = Brushes.Gray
+        swatch.Margin = Thickness(4, 2, 2, 2)
+        swatch.ToolTip = u'Цвет — нажмите, чтобы изменить'
+        swatch.Tag = index
+        swatch.Click += self.on_color_swatch
+        slider = Slider()
+        slider.Minimum = 0
+        slider.Maximum = 100
+        slider.TickFrequency = 5
+        slider.IsSnapToTickEnabled = True
+        slider.Value = it['transparency']
+        slider.VerticalAlignment = VerticalAlignment.Center
+        slider.ToolTip = u'Прозрачность'
+        slider.Tag = index
+        value = _text(u'{0}%'.format(it['transparency']))
+        value.FontSize = 11
+        value.Margin = Thickness(4, 0, 0, 0)
+        slider.ValueChanged += self._slider_label(value)
+        slider.PreviewMouseUp += self.on_color_slider
+        for col, ctl in enumerate((tile, swatch, slider, value)):
+            Grid.SetColumn(ctl, col)
+            grid.Children.Add(ctl)
+        return grid
+
+    @staticmethod
+    def _slider_label(label):
+        def handler(sender, args):
+            label.Text = u'{0}%'.format(int(round(sender.Value)))
+        return handler
+
+    def on_color_tile(self, sender, args):
+        index, state = sender.Tag
+        if state == 'none':
+            self.status(unicode(sender.ToolTip).replace(u'\n', u' '))
+            return
+        self.request('colors_toggle', index=index, on=(state != 'on'))
+
+    def on_color_swatch(self, sender, args):
+        index = sender.Tag
+        it = self.profile['colors']['items'][index]
+        rgb = pick_color(it['color'])
+        if rgb is None:
+            return
+        it['color'] = rgb
+        self.save_profile()
+        self.render_colors()
+        self.request('colors_update', index=index)
+
+    def on_color_slider(self, sender, args):
+        index = sender.Tag
+        it = self.profile['colors']['items'][index]
+        value = int(round(sender.Value))
+        if value == it['transparency']:
+            return
+        it['transparency'] = value
+        self.save_profile()
+        self.request('colors_update', index=index)
 
     def on_colors_setup(self, sender, args):
         info = self.color_info
@@ -926,6 +1006,20 @@ PALETTE = ((231, 76, 60), (52, 152, 219), (46, 204, 113), (243, 156, 18), (155, 
            (205, 220, 57), (255, 87, 34))
 
 
+def pick_color(rgb):
+    """Стандартное окно выбора цвета Windows. Возвращает [r, g, b] или None."""
+    clr.AddReference('System.Windows.Forms')
+    clr.AddReference('System.Drawing')
+    from System.Windows.Forms import ColorDialog, DialogResult
+    from System.Drawing import Color as DColor
+    dlg = ColorDialog()
+    dlg.FullOpen = True
+    dlg.Color = DColor.FromArgb(*rgb)
+    if dlg.ShowDialog() != DialogResult.OK:
+        return None
+    return [int(dlg.Color.R), int(dlg.Color.G), int(dlg.Color.B)]
+
+
 class ColorEditor(object):
     """Окно «Цвета по рабочим наборам»: модели слева, РБ выбранной модели справа."""
 
@@ -1077,16 +1171,9 @@ class ColorEditor(object):
 
     def _pick(self, it, swatch):
         def handler(sender, args):
-            import clr as _clr
-            _clr.AddReference('System.Windows.Forms')
-            _clr.AddReference('System.Drawing')
-            from System.Windows.Forms import ColorDialog, DialogResult
-            from System.Drawing import Color as DColor
-            dlg = ColorDialog()
-            dlg.FullOpen = True
-            dlg.Color = DColor.FromArgb(*it['color'])
-            if dlg.ShowDialog() == DialogResult.OK:
-                it['color'] = [int(dlg.Color.R), int(dlg.Color.G), int(dlg.Color.B)]
+            rgb = pick_color(it['color'])
+            if rgb is not None:
+                it['color'] = rgb
                 swatch.Background = SolidColorBrush(Color.FromRgb(*it['color']))
                 if not it['enabled']:
                     it['enabled'] = True
