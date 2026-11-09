@@ -16,6 +16,12 @@ This is a pyRevit extension for Autodesk Revit, distributed from GitHub (`popere
 - Buttons marked as ported from LowLife (github.com/avpersiyanov-afk/LowLife, MIT) use `lib/eomtools`. Keep `lib/eomtools/LICENSE-LowLife.txt`. Local settings files are named `EOM*_settings.json`; model-facing identifiers (Extensible Storage schema GUIDs/names, shared parameter GUIDs and group "LowLife", updater GUID) were deliberately kept identical to LowLife for compatibility with models it already processed — do not change them.
 - Push to `main` only changes that were tested in Revit: pyRevit → Update delivers `main` to every user immediately. Use a separate branch for work in progress.
 
+## View Manager (dockable pane)
+
+- `startup.py` registers the pane once per Revit session (`lib/eomtools/vm_host.py`, kept minimal and stable) and on every pyRevit reload binds a fresh `vm_ui.Controller` — so changes in `vm_ui.py`, `vm_revit.py`, `vm_profile.py` and the XAML apply after pyRevit Reload; changes in `vm_host.py` need a Revit restart.
+- Model reads/writes happen only in ExternalEvent/Idling. Every action is one named transaction `View Manager: …` (Ctrl+Z must undo exactly one click).
+- Never modify a view template unless the profile's `allow_template` is on.
+
 ## Development workflow (author's PC)
 
 - This working copy (`Desktop\Игрушки с ИИ\Плагин\Claude`) is what pyRevit loads on the author's PC: `%APPDATA%\pyRevit\Extensions\EOM-RevitTools.extension` is a directory junction to it. The original pyRevit clone was kept as `EOM-RevitTools.backup-appdata` in the same folder.

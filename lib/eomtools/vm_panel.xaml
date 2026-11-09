@@ -1,0 +1,62 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+      TextElement.Foreground="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}">
+  <Grid.RowDefinitions>
+    <RowDefinition Height="Auto"/>
+    <RowDefinition Height="*"/>
+    <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+
+  <StackPanel Grid.Row="0" Margin="8,8,8,4">
+    <TextBlock x:Name="view_label" FontWeight="Bold" TextWrapping="Wrap"/>
+    <TextBlock x:Name="target_label" TextWrapping="Wrap" Margin="0,3,0,0"/>
+  </StackPanel>
+
+  <TabControl Grid.Row="1" Margin="4,0,4,0">
+    <TabItem Header="Рабочие наборы">
+      <Grid Margin="4">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <WrapPanel Grid.Row="0" Margin="0,2,0,6">
+          <Button x:Name="all_on_button" Content="All On" Padding="8,3" Margin="0,0,4,0"/>
+          <Button x:Name="all_off_button" Content="All Off" Padding="8,3" Margin="0,0,4,0"/>
+          <Button x:Name="groups_button" Content="Группы…" Padding="8,3"
+                  ToolTip="Создать, переименовать, удалить группы и выбрать их рабочие наборы"/>
+        </WrapPanel>
+        <TextBlock Grid.Row="1" Text="Группы" FontWeight="Bold" Margin="0,0,0,2"/>
+        <ScrollViewer Grid.Row="2" MaxHeight="260" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="groups_panel"/>
+        </ScrollViewer>
+        <DockPanel Grid.Row="3" Margin="0,8,0,4" LastChildFill="True">
+          <TextBlock DockPanel.Dock="Top" Text="Все рабочие наборы" FontWeight="Bold" Margin="0,0,0,2"/>
+          <TextBox x:Name="search_box" ToolTip="Поиск по имени рабочего набора"/>
+        </DockPanel>
+        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="worksets_panel"/>
+        </ScrollViewer>
+      </Grid>
+    </TabItem>
+    <TabItem Header="Категории">
+      <TextBlock Margin="8" TextWrapping="Wrap"
+                 Text="Этап 2: быстрые категории — вкладки «Элементы» и «Аннотации»."/>
+    </TabItem>
+  </TabControl>
+
+  <StackPanel Grid.Row="2" Margin="8,6,8,8">
+    <CheckBox x:Name="allow_template_box" Content="Разрешаю менять шаблон вида"
+              ToolTip="Если шаблон вида управляет рабочими наборами, изменения будут вноситься в шаблон — они коснутся всех видов с этим шаблоном."/>
+    <WrapPanel Margin="0,6,0,0">
+      <Button x:Name="save_button" Content="Сохранить профиль…" Padding="8,3" Margin="0,0,4,0"/>
+      <Button x:Name="load_button" Content="Загрузить профиль…" Padding="8,3"/>
+    </WrapPanel>
+    <TextBlock x:Name="status_label" TextWrapping="Wrap" Margin="0,6,0,0"/>
+  </StackPanel>
+</Grid>
