@@ -23,6 +23,95 @@ out = script.get_output()
 if not vm_revit.supported(view):
     forms.alert(u'Откройте план, разрез, фасад или 3D-вид.', exitscript=True)
 
+MODE_FILTER = u'1. Фильтр «Рабочий набор содержит…» (красный)'
+MODE_LINK_COLOR = u'2. Покрасить связь целиком (оранжевый)'
+MODE_LINK_VIEW = u'3. Связь «По связанному виду» (фильтры вида её не трогают)'
+mode = forms.CommandSwitchWindow.show(
+    [MODE_FILTER, MODE_LINK_COLOR, MODE_LINK_VIEW],
+    message=u'Что проверяем? Для СС: сначала 1 (например «КНК»), потом 2 или 3 на связи СС.')
+if not mode:
+    script.exit()
+
+
+def pick_link():
+    links = [l for l in FilteredElementCollector(doc).OfClass(RevitLinkInstance)]
+    if not links:
+        forms.alert(u'В модели нет связей.', exitscript=True)
+    names = [l.Name for l in links]
+    chosen = forms.SelectFromList.show(names, title=u'Выберите связь', multiselect=False)
+    if not chosen:
+        script.exit()
+    return links[names.index(chosen)]
+
+
+def run(label, action):
+    tx = Transaction(doc, u'View Manager: тест — {0}'.format(label))
+    tx.Start()
+    try:
+        action()
+        return tx.Commit()
+    except Exception as exc:
+        if tx.GetStatus() == TransactionStatus.Started:
+            tx.RollBack()
+        out.print_md(u'**Ошибка:** {0}'.format(exc))
+        forms.alert(u'Ошибка:\n{0}'.format(exc), exitscript=True)
+
+
+if mode == MODE_LINK_COLOR:
+    link = pick_link()
+    orange = Color(255, 140, 0)
+    solid_fp = None
+    for fp in FilteredElementCollector(doc).OfClass(FillPatternElement):
+        if fp.GetFillPattern().IsSolidFill:
+            solid_fp = fp
+            break
+    o = OverrideGraphicSettings()
+    o.SetProjectionLineColor(orange)
+    o.SetCutLineColor(orange)
+    if solid_fp is not None:
+        o.SetSurfaceForegroundPatternId(solid_fp.Id)
+        o.SetSurfaceForegroundPatternColor(orange)
+        o.SetCutForegroundPatternId(solid_fp.Id)
+        o.SetCutForegroundPatternColor(orange)
+    st = run(u'связь целиком', lambda: view.SetElementOverrides(link.Id, o))
+    out.print_md(u'## Тест: связь целиком\nСвязь **{0}** — оранжевое переопределение на виде '
+                 u'«{1}». Статус: {2}.'.format(link.Name, view.Name, st))
+    out.print_md(u'Что проверить: стала ли связь оранжевой **целиком**, и что победило там, '
+                 u'где на неё действует фильтр из режима 1 (красный или оранжевый). Отмена — Ctrl+Z.')
+    script.exit()
+
+if mode == MODE_LINK_VIEW:
+    from Autodesk.Revit.DB import LinkVisibility, RevitLinkGraphicsSettings, View
+    link = pick_link()
+    ldoc = link.GetLinkDocument()
+    if ldoc is None:
+        forms.alert(u'Связь не загружена.', exitscript=True)
+    views = [v for v in FilteredElementCollector(ldoc).OfClass(View)
+             if not v.IsTemplate and v.ViewType == view.ViewType]
+    if not views:
+        forms.alert(u'В связи нет видов типа {0}.'.format(view.ViewType), exitscript=True)
+    vnames = [v.Name for v in views]
+    vchosen = forms.SelectFromList.show(vnames, title=u'Вид связи, по которому показывать',
+                                        multiselect=False)
+    if not vchosen:
+        script.exit()
+    settings = RevitLinkGraphicsSettings()
+    settings.LinkVisibilityType = LinkVisibility.ByLinkView
+    settings.LinkedViewId = views[vnames.index(vchosen)].Id
+    def apply_link_view():
+        try:
+            view.SetLinkOverrides(link.Id, settings)          # экземпляр связи
+        except Exception as first:
+            out.print_md(u'По экземпляру не вышло ({0}), пробую по типу связи.'.format(first))
+            view.SetLinkOverrides(link.GetTypeId(), settings)  # тип связи
+
+    st = run(u'связь по связанному виду', apply_link_view)
+    out.print_md(u'## Тест: «По связанному виду»\nСвязь **{0}** показана по виду связи «{1}». '
+                 u'Статус: {2}.'.format(link.Name, vchosen, st))
+    out.print_md(u'Что проверить: перестал ли фильтр из режима 1 красить эту связь, а другие — '
+                 u'по-прежнему красятся. Отмена — Ctrl+Z.')
+    script.exit()
+
 text = forms.ask_for_string(
     default=u'Канализация',
     prompt=u'Часть имени рабочего набора ВНУТРИ связи (например, «Канализация»):',
