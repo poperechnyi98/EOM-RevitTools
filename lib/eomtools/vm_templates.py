@@ -167,12 +167,21 @@ def _kind(el):
 
 
 def _extras(doc, before, templates):
-    """{вид элемента: [имена]} — что добавилось в модель кроме шаблонов и фильтров."""
+    """{вид элемента: [имена]} — что добавилось в модель кроме шаблонов и фильтров.
+
+    Не считаются: служебные части самого шаблона (настройки солнца и теней
+    «<В сеансе, освещение>» и всё, что принадлежит виду-шаблону)."""
+    from Autodesk.Revit.DB import SunAndShadowSettings
     groups = {}
     for value in _all_ids(doc) - before - templates:
         el = doc.GetElement(ElementId(value))
-        if el is None:
+        if el is None or isinstance(el, SunAndShadowSettings):
             continue
+        try:
+            if el.ViewSpecific and _id_value(el.OwnerViewId) in templates:
+                continue
+        except Exception:
+            pass
         kind = _kind(el)
         if kind == u'Фильтры':
             continue                         # фильтры шаблона — это нормально
