@@ -305,13 +305,8 @@ class Controller(object):
         if scopes == ('worksets',) and not s['workshared']:
             self._line(u'В модели нет рабочих наборов.', TEXT_GRAY)
             return
-        for scope in scopes:
-            text, brush = self.target_text(scope)
-            if scope in KIND_TITLES:
-                text = u'{0}: {1}'.format(KIND_TITLES[scope], text)
-            else:
-                text = text[:1].upper() + text[1:]
-            self._line(text, brush)
+        text, brush = self.target_text(scopes)
+        self._line(text, brush)
 
     def _line(self, text, brush):
         inlines = self.target_label.Inlines
@@ -321,19 +316,21 @@ class Controller(object):
         run.Foreground = brush
         inlines.Add(run)
 
-    def target_text(self, scope):
-        t = self.snap['targets'][scope]
-        what = vm_revit.SCOPE_TITLES[scope]
-        if not t['has_template']:
-            return u'изменения вносятся в вид.', TEXT_GRAY
-        if not t['controlled']:
-            return (u'шаблон «{0}» не управляет {1} — изменения вносятся в вид.'
-                    .format(t['name'], what)), TEXT_GRAY
-        if self.snap['blocked'][scope]:
-            return (u'шаблон «{0}» управляет {1}. Чтобы менять, поставьте галочку '
-                    u'«Разрешаю менять шаблон вида».'.format(t['name'], what)), TEXT_RED
-        return (u'изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
-                .format(t['name'], t['uses'])), TEXT_ORANGE
+    def target_text(self, scopes):
+        """Одна строка: куда пишутся изменения на текущей вкладке."""
+        infos = [self.snap['targets'][s] for s in scopes]
+        first = infos[0]
+        if not first['has_template']:
+            return u'Изменения вносятся в вид.', TEXT_GRAY
+        controlled = [i for i in infos if i['controlled']]
+        if not controlled:
+            return (u'Шаблон «{0}» этим не управляет — изменения вносятся в вид.'
+                    .format(first['name'])), TEXT_GRAY
+        if any(self.snap['blocked'][s] for s in scopes):
+            return (u'Шаблон «{0}». Чтобы менять, поставьте галочку «Разрешаю менять шаблон вида».'
+                    .format(first['name'])), TEXT_RED
+        return (u'Изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
+                .format(first['name'], controlled[0]['uses'])), TEXT_ORANGE
 
     # ---------- плитки ----------
     def build_legend(self):

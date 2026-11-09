@@ -201,7 +201,9 @@ def _category_states(doc, view, owner, keys):
             items.append({'key': key, 'name': key, 'exists': False, 'available': False,
                           'visible': False})
             continue
-        available = view.CanCategoryBeHidden(cat.Id)
+        # проверять там, куда пишется изменение: при шаблоне, который управляет
+        # категориями, сам вид всегда отвечает «нельзя»
+        available = owner.CanCategoryBeHidden(cat.Id)
         visible = available and not owner.GetCategoryHidden(cat.Id)
         items.append({'key': key, 'name': cat.Name, 'exists': True, 'available': available,
                       'visible': visible})
@@ -220,7 +222,7 @@ def set_categories(doc, view, keys_by_kind, show, allow_template, label):
         owner = _owner(view, tg[kind], kind, allow_template)
         for key in keys:
             cat = _category(doc, key)
-            if cat is None or not view.CanCategoryBeHidden(cat.Id):
+            if cat is None or not owner.CanCategoryBeHidden(cat.Id):
                 skipped += 1
             elif owner.GetCategoryHidden(cat.Id) != (not show):
                 todo.append((owner, cat.Id))
