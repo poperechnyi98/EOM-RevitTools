@@ -145,6 +145,38 @@
         </ScrollViewer>
       </DockPanel>
     </TabItem>
+    <TabItem Header="Шаблоны">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="2">
+          <DockPanel Margin="0,2,0,6">
+            <Button x:Name="tpl_folder_button" DockPanel.Dock="Right" Content="Папка…" Margin="4,0,0,0"
+                    ToolTip="Выбрать папку, где хранятся ваши шаблоны вида"/>
+            <TextBlock x:Name="tpl_folder_label" TextWrapping="Wrap" FontSize="11" Foreground="Gray"
+                       VerticalAlignment="Center"/>
+          </DockPanel>
+
+          <TextBlock Text="В модели" FontWeight="Bold" Margin="0,2,0,2"/>
+          <TextBox x:Name="tpl_search_box" Margin="0,0,0,4" ToolTip="Поиск шаблона"/>
+          <ListBox x:Name="tpl_model_list" SelectionMode="Extended" Height="190"/>
+          <WrapPanel Margin="0,4,0,8">
+            <Button x:Name="tpl_export_button" Content="Экспорт выбранных" Margin="0,0,4,4"
+                    ToolTip="Сохранить выбранные шаблоны в папку (каждый — отдельный файл .rvt)"/>
+            <Button x:Name="tpl_export_current_button" Content="Экспорт шаблона этого вида" Margin="0,0,0,4"/>
+          </WrapPanel>
+
+          <TextBlock Text="В папке" FontWeight="Bold" Margin="0,2,0,2"/>
+          <ListBox x:Name="tpl_library_list" SelectionMode="Extended" Height="190"/>
+          <WrapPanel Margin="0,4,0,0">
+            <Button x:Name="tpl_import_button" Content="Импорт выбранных" Margin="0,0,4,4"
+                    ToolTip="Скопировать выбранные шаблоны из папки в эту модель"/>
+            <Button x:Name="tpl_open_button" Content="Открыть папку" Margin="0,0,4,4"/>
+            <Button x:Name="tpl_rescan_button" Content="Обновить список" Margin="0,0,0,4"/>
+          </WrapPanel>
+          <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="Gray" Margin="0,4,0,0"
+                     Text="Шаблон хранится как маленький файл .rvt с именем шаблона — вместе с его фильтрами, типами линий и штриховками. Если в модели уже есть шаблон с таким именем, при импорте плагин спросит: заменить (виды переключатся на новый) или добавить копией."/>
+        </StackPanel>
+      </ScrollViewer>
+    </TabItem>
   </TabControl>
 
   <Border Grid.Row="1" BorderBrush="#D5DBE1" BorderThickness="0,1,0,0" Margin="4,6,4,0">

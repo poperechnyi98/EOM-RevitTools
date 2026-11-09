@@ -34,7 +34,7 @@ from System.Windows.Media import Brushes, Color, SolidColorBrush
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.UI import ExternalEventRequest
 
-from eomtools import vm_colors, vm_profile, vm_revit
+from eomtools import vm_colors, vm_profile, vm_revit, vm_templates
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -189,6 +189,10 @@ class Controller(object):
              # цвета
              'colors_apply_button', 'colors_clear_button', 'colors_setup_button',
              'colors_take_button',
+             # шаблоны вида
+             'tpl_folder_button', 'tpl_folder_label', 'tpl_search_box', 'tpl_model_list',
+             'tpl_export_button', 'tpl_export_current_button', 'tpl_library_list',
+             'tpl_import_button', 'tpl_open_button', 'tpl_rescan_button',
              'colors_state_label', 'colors_panel')
 
     def __init__(self, host):
@@ -224,6 +228,15 @@ class Controller(object):
         self.colors_clear_button.Click += self.on_colors_clear
         self.colors_setup_button.Click += self.on_colors_setup
         self.colors_take_button.Click += self.on_colors_take
+        self.templates = []
+        self.view_template_id = None
+        self.tpl_folder_button.Click += self.on_tpl_folder
+        self.tpl_search_box.TextChanged += self.on_tpl_search
+        self.tpl_export_button.Click += self.on_tpl_export
+        self.tpl_export_current_button.Click += self.on_tpl_export_current
+        self.tpl_import_button.Click += self.on_tpl_import
+        self.tpl_open_button.Click += self.on_tpl_open
+        self.tpl_rescan_button.Click += self.on_tpl_rescan
         self.color_info = None
         self.colors_applied = None
         self.allow_template_box.Click += self.on_allow_template
@@ -261,6 +274,14 @@ class Controller(object):
             self.view_id = view.Id if view is not None else None
             self.snap = vm_revit.snapshot(self.doc, view, self.profile)
             self.color_info, self.colors_applied = None, None
+            self.templates, self.view_template_id = [], None
+            if not self.doc.IsFamilyDocument:
+                try:
+                    self.templates = vm_templates.view_templates(self.doc)
+                    if view is not None and _id_value(view.ViewTemplateId) > 0:
+                        self.view_template_id = _id_value(view.ViewTemplateId)
+                except Exception:
+                    pass
             if not self.doc.IsFamilyDocument:
                 try:
                     self.color_info = vm_colors.scan(self.doc)
@@ -326,6 +347,19 @@ class Controller(object):
                                 u'на вид попадёт по «Применить».'.format(item['name']))
                 else:
                     self.status(u'Готово: {0}.'.format(item['name']))
+                return
+            if kind == 'tpl_export':
+                saved = vm_templates.export(uiapp, doc, p['ids'], self.profile['templates_folder'])
+                self.render_templates()
+                self.status(u'Экспортировано шаблонов: {0} → {1}'.format(
+                    len(saved), self.profile['templates_folder']))
+                return
+            if kind == 'tpl_import':
+                report = vm_templates.import_files(uiapp, doc, p['paths'], p['mode'],
+                                                   u'импорт шаблонов вида')
+                self.refresh(uiapp)
+                self.status(u'Импортировано: ' + u'; '.join(
+                    u'{0} ({1})'.format(n, how) for n, how in report))
                 return
             if kind == 'colors_clear':
                 removed = vm_colors.clear(doc, uidoc.ActiveView, allow, u'снять цвета по РБ')
@@ -401,6 +435,7 @@ class Controller(object):
         self.render_ws_area()
         self.render_categories()
         self.render_colors()
+        self.render_templates()
         self.update_enabled()
 
     def current_scopes(self):
@@ -894,6 +929,116 @@ class Controller(object):
 
     def on_colors_clear(self, sender, args):
         self.request('colors_clear')
+
+    # ---------- вкладка «Шаблоны» ----------
+    def render_templates(self):
+        folder = self.profile['templates_folder']
+        self.tpl_folder_label.Text = folder or u'Папка не выбрана — нажмите «Папка…»'
+        query = self.tpl_search_box.Text
+        self.tpl_model_list.Items.Clear()
+        for t in self.templates:
+            if not _matches(t['name'], query):
+                continue
+            item = _text(t['name'])
+            item.Tag = t['id']
+            item.ToolTip = u'{0}\nТип вида: {1}'.format(t['name'], t['type'])
+            if t['id'] == self.view_template_id:
+                item.FontWeight = FontWeights.Bold
+                item.ToolTip += u'\nШаблон текущего вида'
+            self.tpl_model_list.Items.Add(item)
+        self.tpl_library_list.Items.Clear()
+        in_model = set(t['name'] for t in self.templates)
+        for f in vm_templates.library(folder):
+            item = _text(f['name'] + (u'   · есть в модели' if f['name'] in in_model else u''))
+            item.Tag = f['path']
+            item.ToolTip = f['path']
+            self.tpl_library_list.Items.Add(item)
+        has_folder = bool(folder)
+        self.tpl_export_current_button.IsEnabled = self.view_template_id is not None and not self.busy
+        for ctl in (self.tpl_export_button, self.tpl_import_button, self.tpl_open_button,
+                    self.tpl_rescan_button):
+            ctl.IsEnabled = has_folder and not self.busy
+
+    def on_tpl_search(self, sender, args):
+        self.render_templates()
+
+    def on_tpl_rescan(self, sender, args):
+        self.render_templates()
+
+    def on_tpl_folder(self, sender, args):
+        clr.AddReference('System.Windows.Forms')
+        from System.Windows.Forms import DialogResult, FolderBrowserDialog
+        dlg = FolderBrowserDialog()
+        dlg.Description = u'Папка для шаблонов вида'
+        if self.profile['templates_folder']:
+            dlg.SelectedPath = self.profile['templates_folder']
+        if dlg.ShowDialog() != DialogResult.OK:
+            return
+        self.profile['templates_folder'] = dlg.SelectedPath
+        self.save_profile()
+        self.render_templates()
+        self.status(u'Папка шаблонов: {0}'.format(dlg.SelectedPath))
+
+    def on_tpl_open(self, sender, args):
+        folder = self.profile['templates_folder']
+        if folder and os.path.isdir(folder):
+            os.startfile(folder)
+
+    def _need_folder(self):
+        folder = self.profile['templates_folder']
+        if not folder or not os.path.isdir(folder):
+            self.status(u'Сначала выберите папку для шаблонов («Папка…»).')
+            return False
+        return True
+
+    def _confirm_overwrite(self, names):
+        folder = self.profile['templates_folder']
+        exist = [n for n in names if os.path.exists(os.path.join(folder, vm_templates.file_name(n)))]
+        if not exist:
+            return True
+        answer = MessageBox.Show(
+            u'В папке уже есть: {0}.\nПерезаписать?'.format(u', '.join(exist)), u'View Manager',
+            MessageBoxButton.YesNo, MessageBoxImage.Question)
+        return answer == MessageBoxResult.Yes
+
+    def on_tpl_export(self, sender, args):
+        if not self._need_folder():
+            return
+        chosen = list(self.tpl_model_list.SelectedItems)
+        if not chosen:
+            self.status(u'Выберите шаблоны в списке «В модели».')
+            return
+        if not self._confirm_overwrite([c.Text for c in chosen]):
+            return
+        self.request('tpl_export', ids=[c.Tag for c in chosen])
+
+    def on_tpl_export_current(self, sender, args):
+        if not self._need_folder() or self.view_template_id is None:
+            return
+        name = [t['name'] for t in self.templates if t['id'] == self.view_template_id]
+        if name and not self._confirm_overwrite(name):
+            return
+        self.request('tpl_export', ids=[self.view_template_id])
+
+    def on_tpl_import(self, sender, args):
+        chosen = list(self.tpl_library_list.SelectedItems)
+        if not chosen:
+            self.status(u'Выберите шаблоны в списке «В папке».')
+            return
+        in_model = set(t['name'] for t in self.templates)
+        clash = [os.path.splitext(os.path.basename(c.Tag))[0] for c in chosen]
+        clash = [n for n in clash if n in in_model]
+        mode = 'copy'
+        if clash:
+            answer = MessageBox.Show(
+                u'В модели уже есть: {0}.\n\nДа — заменить (виды с этим шаблоном переключатся на '
+                u'новый).\nНет — добавить копией «… (импорт)».\nОтмена — ничего не делать.'
+                .format(u', '.join(clash)), u'View Manager',
+                MessageBoxButton.YesNoCancel, MessageBoxImage.Question)
+            if answer == MessageBoxResult.Cancel:
+                return
+            mode = 'replace' if answer == MessageBoxResult.Yes else 'copy'
+        self.request('tpl_import', paths=[c.Tag for c in chosen], mode=mode)
 
     # ---------- общее ----------
     def on_tab(self, sender, args):

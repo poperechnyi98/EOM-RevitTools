@@ -28,7 +28,9 @@ def default():
             # вкладка «Цвета»: окраска по рабочим наборам (в т.ч. внутри связей).
             # items: {'name', 'scope': 'own'|'link', 'enabled', 'color': [r,g,b], 'transparency'}
             # param — параметр, которым различаются одинаковые РБ у нас и в связях
-            'colors': {'param': u'SMNX_Фильтр', 'items': []}}
+            'colors': {'param': u'SMNX_Фильтр', 'items': []},
+            # вкладка «Шаблоны вида»: папка с файлами шаблонов
+            'templates_folder': u''}
 
 
 def _color(value):
@@ -100,6 +102,7 @@ def normalize(data):
     if isinstance(colors, dict):
         result['colors'] = {'param': unicode(colors.get('param') or u'SMNX_Фильтр'),
                             'items': _color_items(colors.get('items'))}
+    result['templates_folder'] = unicode(data.get('templates_folder') or u'')
     return result
 
 

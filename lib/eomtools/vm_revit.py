@@ -21,7 +21,7 @@ import uuid
 
 from Autodesk.Revit.DB import (
     BuiltInCategory, BuiltInParameter, Category, CategoryType, CheckoutStatus, ElementId,
-    FailureProcessingResult, FilteredElementCollector, FilteredWorksetCollector,
+    FailureProcessingResult, FailureSeverity, FilteredElementCollector, FilteredWorksetCollector,
     IFailuresPreprocessor, Transaction, TransactionStatus, View, ViewType,
     WorksetDefaultVisibilitySettings, WorksetKind, WorksetVisibility, WorksharingUtils)
 
@@ -121,27 +121,35 @@ class _CollectFailures(IFailuresPreprocessor):
     модель с временными изменениями."""
     __namespace__ = _NAMESPACE
 
-    def __init__(self):
+    def __init__(self, tolerate_warnings=False):
         self.messages = []
+        self.tolerate_warnings = tolerate_warnings
 
     def PreprocessFailures(self, accessor):
         failures = list(accessor.GetFailureMessages())
         if not failures:
             return FailureProcessingResult.Continue
+        rollback = False
         for f in failures:
+            if self.tolerate_warnings and f.GetSeverity() == FailureSeverity.Warning:
+                accessor.DeleteWarning(f)      # например «тип переименован» при копировании
+                continue
+            rollback = True
             try:
                 text = f.GetDescriptionText()
             except Exception:
                 text = u''
             if text and text not in self.messages:
                 self.messages.append(text)
-        return FailureProcessingResult.ProceedWithRollBack
+        if rollback:
+            return FailureProcessingResult.ProceedWithRollBack
+        return FailureProcessingResult.Continue
 
 
-def _run(doc, label, action):
+def _run(doc, label, action, tolerate_warnings=False):
     if doc.IsReadOnly:
         raise ViewManagerError(u'Модель открыта только для чтения.')
-    collector = _CollectFailures()
+    collector = _CollectFailures(tolerate_warnings)
     tx = Transaction(doc, TX_PREFIX + label)
     options = tx.GetFailureHandlingOptions()
     options.SetFailuresPreprocessor(collector)
