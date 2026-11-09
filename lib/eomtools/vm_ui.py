@@ -799,7 +799,7 @@ class GroupEditor(object):
     NAMES = ('groups_list', 'add_button', 'delete_button', 'up_button', 'down_button',
              'name_box', 'count_label', 'search_box', 'check_shown_button',
              'uncheck_shown_button', 'worksets_panel', 'ok_button',
-             'strip_prefix_box', 'rules_panel', 'preview_panel', 'add_rule_button')
+             'rules_panel', 'preview_panel', 'add_rule_button')
 
     def __init__(self, model_names, groups, naming, owner_hwnd):
         self.win = _load_xaml('vm_groups.xaml')
@@ -812,8 +812,6 @@ class GroupEditor(object):
         self.current = None
         self.loading = False
         self.result = None
-        self.strip_prefix_box.IsChecked = self.naming['strip_prefix']
-        self.strip_prefix_box.Click += self.on_strip_prefix
         self.add_rule_button.Click += self.on_add_rule
         self.render_rules()
         self.groups_list.SelectionChanged += self.on_select
@@ -1020,15 +1018,10 @@ class GroupEditor(object):
         last = self.rules_panel.Children[len(self.naming['rules']) - 1]
         last.Children[0].Focus()
 
-    def on_strip_prefix(self, sender, args):
-        self.naming['strip_prefix'] = bool(self.strip_prefix_box.IsChecked)
-        self.render_preview()
-
     def render_preview(self):
         panel = self.preview_panel
         panel.Children.Clear()
-        naming = {'strip_prefix': self.naming['strip_prefix'],
-                  'rules': [r for r in self.naming['rules'] if r['find']]}
+        naming = {'rules': [r for r in self.naming['rules'] if r['find']]}
         for name in self.model_names:
             short = vm_profile.short_workset_name(name, naming)
             row = TextBlock()

@@ -59,12 +59,6 @@
           </Grid.ColumnDefinitions>
           <DockPanel Grid.Column="0">
             <StackPanel DockPanel.Dock="Top">
-              <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,8"
-                         Text="Сокращает имена рабочих наборов только на плитках панели. В модели ничего не переименовывается, полное имя видно в подсказке."/>
-              <CheckBox x:Name="strip_prefix_box" Margin="0,0,0,10">
-                <TextBlock TextWrapping="Wrap"
-                           Text="Убирать номер в начале (0_, 1_, 2_ …) — он виден в заголовке подгруппы"/>
-              </CheckBox>
               <TextBlock Text="Правила: найти → заменить на" FontWeight="Bold"/>
               <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,2,0,6"
                          Text="Применяются сверху вниз. Пустое «заменить на» — просто убрать текст. Учитываются пробелы и регистр."/>
