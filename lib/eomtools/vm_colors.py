@@ -150,40 +150,65 @@ def _our_filters(doc, owner):
     return result
 
 
-def applied_count(doc, view):
+def _view_owner(doc, view):
     tg = vm_revit.targets(doc, view)['filters']
-    owner = tg['template'] if tg['controlled'] else view
-    return len(_our_filters(doc, owner))
+    return tg['template'] if tg['controlled'] else view
 
 
-def view_state(doc, view):
-    """{имя фильтра 3_ВСЕ_РБ_: включён ли он} на виде (или в его шаблоне)."""
-    tg = vm_revit.targets(doc, view)['filters']
-    owner = tg['template'] if tg['controlled'] else view
-    return dict((name, owner.GetIsFilterEnabled(fid))
-                for name, fid in _our_filters(doc, owner).items())
+def parse_filter_name(fname, own_names):
+    """Имя фильтра 3_ВСЕ_РБ_… → (имя РБ, 'own'|'link')."""
+    ws = fname[len(PREFIX):]
+    if ws.endswith(LINK_SUFFIX):
+        return ws[:-len(LINK_SUFFIX)], 'link'
+    return ws, ('own' if ws in own_names else 'link')
 
 
-def _applied_filter(doc, view, item, allow_template):
+def _rgb(color):
+    try:
+        if color is not None and color.IsValid:
+            return [int(color.Red), int(color.Green), int(color.Blue)]
+    except Exception:
+        pass
+    return None
+
+
+def view_filters(doc, view, own_names):
+    """Фильтры 3_ВСЕ_РБ_ на виде (или в его шаблоне) с их настоящими настройками.
+
+    [{'filter', 'name' (РБ), 'scope', 'enabled', 'color' ([r,g,b] или None),
+      'transparency'}] — в порядке списка фильтров вида."""
+    owner = _view_owner(doc, view)
+    result = []
+    for fname, fid in _our_filters(doc, owner).items():
+        ogs = owner.GetFilterOverrides(fid)
+        color = (_rgb(ogs.SurfaceForegroundPatternColor) or _rgb(ogs.ProjectionLineColor)
+                 or _rgb(ogs.CutForegroundPatternColor))
+        ws, scope = parse_filter_name(fname, own_names)
+        result.append({'filter': fname, 'name': ws, 'scope': scope,
+                       'enabled': owner.GetIsFilterEnabled(fid), 'color': color,
+                       'transparency': int(ogs.Transparency)})
+    result.sort(key=lambda x: x['filter'].lower())
+    return result
+
+
+def _applied_filter(doc, view, fname, allow_template):
     owner = vm_revit._owner(doc, view, vm_revit.targets(doc, view)['filters'], 'filters',
                             allow_template)
-    name = filter_name(item, shared_names(scan(doc)))
-    fid = _our_filters(doc, owner).get(name)
-    return owner, name, fid
+    return owner, _our_filters(doc, owner).get(fname)
 
 
-def set_enabled(doc, view, item, enabled, allow_template, label):
-    """Включить/выключить фильтр РБ на виде. Возвращает False, если фильтр не применён."""
-    owner, name, fid = _applied_filter(doc, view, item, allow_template)
+def set_enabled(doc, view, fname, enabled, allow_template, label):
+    """Включить/выключить фильтр на виде. Возвращает False, если фильтра на виде нет."""
+    owner, fid = _applied_filter(doc, view, fname, allow_template)
     if fid is None:
         return False
     vm_revit._run(doc, label, lambda: owner.SetIsFilterEnabled(fid, enabled))
     return True
 
 
-def update_one(doc, view, item, allow_template, label):
-    """Обновить цвет/прозрачность фильтра РБ на виде. False — фильтр ещё не применён."""
-    owner, name, fid = _applied_filter(doc, view, item, allow_template)
+def update_one(doc, view, fname, item, allow_template, label):
+    """Записать цвет/прозрачность item в фильтр на виде. False — фильтра на виде нет."""
+    owner, fid = _applied_filter(doc, view, fname, allow_template)
     if fid is None:
         return False
     ogs = _overrides(item, _solid_fill(doc))
@@ -192,9 +217,10 @@ def update_one(doc, view, item, allow_template, label):
 
 
 def apply(doc, view, colors, allow_template, label):
-    """Создать/обновить фильтры схемы и привести к ней вид (или шаблон).
+    """Создать недостающие и обновить существующие фильтры схемы на виде (или шаблоне).
 
-    Возвращает (применено фильтров, снято лишних)."""
+    Фильтры 3_ВСЕ_РБ_, которых нет в схеме, не трогаются (снимает их только «Снять»).
+    Возвращает число фильтров схемы на виде."""
     owner = vm_revit._owner(doc, view, vm_revit.targets(doc, view)['filters'], 'filters',
                             allow_template)
     info = scan(doc)
@@ -248,17 +274,11 @@ def apply(doc, view, colors, allow_template, label):
                 owner.AddFilter(pfe.Id)
             owner.SetFilterOverrides(pfe.Id, _overrides(it, solid_id))
             owner.SetFilterVisibility(pfe.Id, True)
-        removed = 0
-        for name, fid in _our_filters(doc, owner).items():
-            if name not in wanted:
-                owner.RemoveFilter(fid)
-                removed += 1
-        result.append((len(wanted), removed))
+        result.append(len(wanted))
 
     result = []
     vm_revit._run(doc, label, action)
-    applied, removed = result[0] if result else (0, 0)
-    return applied, removed
+    return result[0] if result else 0
 
 
 def clear(doc, view, allow_template, label):

@@ -128,9 +128,11 @@
       <DockPanel Margin="2">
         <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="False">
           <Button x:Name="colors_apply_button" DockPanel.Dock="Left" Content="Применить" Margin="0,0,4,0"
-                  ToolTip="Создать/обновить фильтры 3_ВСЕ_РБ_… по схеме и применить к виду (или шаблону)"/>
+                  ToolTip="Создать недостающие и обновить существующие фильтры 3_ВСЕ_РБ_… по схеме (другие фильтры не трогает)"/>
           <Button x:Name="colors_clear_button" DockPanel.Dock="Left" Content="Снять"
                   ToolTip="Убрать с вида (или шаблона) все фильтры 3_ВСЕ_РБ_…"/>
+          <Button x:Name="colors_take_button" DockPanel.Dock="Left" Content="Взять из вида" Margin="4,0,0,0"
+                  ToolTip="Записать цвета и прозрачность фильтров 3_ВСЕ_РБ_… этого вида в вашу схему"/>
           <Button x:Name="colors_setup_button" DockPanel.Dock="Right" Padding="6,2"
                   ToolTip="Настройка: цвета и прозрачность по рабочим наборам">
             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="14"/>
