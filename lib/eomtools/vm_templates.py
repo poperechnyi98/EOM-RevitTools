@@ -139,22 +139,85 @@ def templates_in_file(uiapp, path):
         src.Close(False)
 
 
+def _all_ids(doc):
+    ids = set(_id_value(i) for i in
+              FilteredElementCollector(doc).WhereElementIsNotElementType().ToElementIds())
+    ids.update(_id_value(i) for i in
+               FilteredElementCollector(doc).WhereElementIsElementType().ToElementIds())
+    return ids
+
+
+def _kind(el):
+    from Autodesk.Revit.DB import (FillPatternElement, LinePatternElement, ParameterElement,
+                                   ParameterFilterElement)
+    if isinstance(el, ParameterFilterElement):
+        return u'Фильтры'
+    if isinstance(el, LinePatternElement):
+        return u'Типы линий (образцы)'
+    if isinstance(el, FillPatternElement):
+        return u'Штриховки'
+    if isinstance(el, ParameterElement):
+        return u'Параметры'
+    try:
+        if el.Category is not None:
+            return el.Category.Name
+    except Exception:
+        pass
+    return el.GetType().Name
+
+
+def _extras(doc, before, templates):
+    """{вид элемента: [имена]} — что добавилось в модель кроме шаблонов и фильтров."""
+    groups = {}
+    for value in _all_ids(doc) - before - templates:
+        el = doc.GetElement(ElementId(value))
+        if el is None:
+            continue
+        kind = _kind(el)
+        if kind == u'Фильтры':
+            continue                         # фильтры шаблона — это нормально
+        name = getattr(el, 'Name', None) or u'#{0}'.format(value)
+        groups.setdefault(kind, []).append(name)
+    return groups
+
+
+def _ask_keep(groups):
+    from System.Windows import MessageBox, MessageBoxButton, MessageBoxImage, MessageBoxResult
+    lines = []
+    for kind in sorted(groups):
+        names = sorted(groups[kind])
+        tail = u' и ещё {0}'.format(len(names) - 8) if len(names) > 8 else u''
+        lines.append(u'• {0}: {1}{2}'.format(kind, u', '.join(names[:8]), tail))
+    answer = MessageBox.Show(
+        u'Вместе с шаблоном в модель добавится не только он и его фильтры:\n\n{0}\n\n'
+        u'Да — оставить (шаблон будет как в файле).\nНет — отменить импорт, модель не изменится.'
+        .format(u'\n'.join(lines)), u'View Manager — импорт шаблона',
+        MessageBoxButton.YesNo, MessageBoxImage.Warning)
+    return answer == MessageBoxResult.Yes
+
+
 def import_files(uiapp, doc, paths, mode, label):
     """Скопировать шаблоны из файлов библиотеки в модель.
 
-    mode: 'replace' | 'copy'. Возвращает [(имя, 'новый'|'заменён'|'копия')]."""
+    Если в файле один шаблон, он получает имя файла (файл переименовали — шаблон
+    придёт с новым именем). mode: 'replace' | 'copy'.
+    Возвращает [(имя, 'новый'|'заменён'|'копия')]."""
     sources = []
     try:
         for path in paths:
             src = uiapp.Application.OpenDocumentFile(path)
-            sources.append(src)
+            stem = os.path.splitext(os.path.basename(path))[0]
+            sources.append((src, stem))
         existing = dict((t['name'], ElementId(t['id'])) for t in view_templates(doc))
         report = []
+        before = _all_ids(doc)
+        new_templates = set()
 
         def action():
-            for src in sources:
-                for t in view_templates(src):
-                    name = t['name']
+            for src, stem in sources:
+                in_file = view_templates(src)
+                for t in in_file:
+                    name = stem if len(in_file) == 1 else t['name']
                     old_id = existing.get(name)
                     if old_id is not None:
                         # временно переименовать старый, чтобы новый встал под своим именем
@@ -168,6 +231,7 @@ def import_files(uiapp, doc, paths, mode, label):
                             new_tpl = el
                     if new_tpl is None:
                         raise ViewManagerError(u'Шаблон «{0}» не скопировался.'.format(name))
+                    new_templates.add(_id_value(new_tpl.Id))
                     if old_id is None:
                         new_tpl.Name = name
                         report.append((name, u'новый'))
@@ -191,6 +255,9 @@ def import_files(uiapp, doc, paths, mode, label):
                         new_tpl.Name = _free_name(doc, u'{0} (импорт)'.format(name))
                         doc.GetElement(old_id).Name = name
                         report.append((new_tpl.Name, u'копия'))
+            extras = _extras(doc, before, new_templates)
+            if extras and not _ask_keep(extras):
+                raise ViewManagerError(u'Импорт отменён — модель не изменена.')
 
         vm_revit._run(doc, label, action, tolerate_warnings=True)
         return report

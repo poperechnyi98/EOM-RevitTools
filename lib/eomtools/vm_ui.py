@@ -428,6 +428,9 @@ class Controller(object):
         for ctl in (self.groups_button, self.cat_setup_button, self.colors_setup_button,
                     self.allow_template_box, self.save_button, self.load_button):
             ctl.IsEnabled = not self.busy
+        # кнопки вкладки «Шаблоны» тоже зависят от «занято» — иначе после действия
+        # они оставались серыми (включались до снятия флага)
+        self.update_tpl_buttons()
 
     # ---------- отрисовка ----------
     def render(self):
@@ -953,11 +956,15 @@ class Controller(object):
             item.Tag = f['path']
             item.ToolTip = f['path']
             self.tpl_library_list.Items.Add(item)
-        has_folder = bool(folder)
+        self.update_tpl_buttons()
+
+    def update_tpl_buttons(self):
+        has_folder = bool(self.profile['templates_folder'])
         self.tpl_export_current_button.IsEnabled = self.view_template_id is not None and not self.busy
         for ctl in (self.tpl_export_button, self.tpl_import_button, self.tpl_open_button,
                     self.tpl_rescan_button):
             ctl.IsEnabled = has_folder and not self.busy
+        self.tpl_folder_button.IsEnabled = not self.busy
 
     def on_tpl_search(self, sender, args):
         self.render_templates()
