@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""View Manager: интерфейс закреплённой панели и окно редактирования групп.
+"""View Manager: интерфейс закреплённой панели и окна настройки.
 
 WPF только ставит запросы в очередь; чтение и изменение модели выполняются
 в ExternalEvent (``execute``) или в Idling (``on_idle``) — это контекст Revit API.
@@ -18,9 +18,13 @@ import clr
 clr.AddReference('PresentationFramework')
 clr.AddReference('PresentationCore')
 clr.AddReference('WindowsBase')
-from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxButton, MessageBoxImage,
-                            MessageBoxResult, Thickness, VerticalAlignment, TextTrimming)
-from System.Windows.Controls import Border, Button, CheckBox, TextBlock, WrapPanel
+from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxButton,
+                            MessageBoxImage, MessageBoxResult, Thickness, VerticalAlignment,
+                            TextTrimming)
+from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, ScrollViewer,
+                                     ScrollBarVisibility, StackPanel, TabItem, TextBlock, TextBox,
+                                     WrapPanel, Dock)
+from System.Windows.Documents import LineBreak, Run
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Markup import XamlReader
 from System.Windows.Media import Brushes, Color, SolidColorBrush
@@ -32,6 +36,8 @@ from eomtools import vm_profile, vm_revit
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 TILE_MIN_WIDTH = 125.0
+KINDS = ('model', 'annotation')
+KIND_TITLES = {'model': u'Элементы', 'annotation': u'Аннотации'}
 
 
 def _brush(hex_color):
@@ -49,6 +55,9 @@ COLORS = {
     'none': (_brush('#F5F5F5'), _brush('#9E9E9E'), _brush('#D6D6D6')),
 }
 LEGEND = (('on', u'включено'), ('off', u'выключено'), ('part', u'частично'))
+TEXT_GRAY = Brushes.Gray
+TEXT_RED = Brushes.Firebrick
+TEXT_ORANGE = Brushes.DarkOrange
 
 # Подгруппы списка рабочих наборов по префиксу «N_» в имени
 SECTION_TITLES = {u'0': u'0 — Связи', u'1': u'1 — Второстепенные', u'2': u'2 — ЭОМ'}
@@ -89,16 +98,28 @@ def _text(value, gray=False):
     tb.VerticalAlignment = VerticalAlignment.Center
     tb.TextTrimming = TextTrimming.CharacterEllipsis
     if gray:
-        tb.Foreground = Brushes.Gray
+        tb.Foreground = TEXT_GRAY
     return tb
+
+
+def _owner_window(win, hwnd):
+    try:
+        WindowInteropHelper(win).Owner = hwnd
+    except Exception:
+        pass
 
 
 class Controller(object):
     """Логика и интерфейс панели. Заменяется целиком при обновлении кода."""
 
-    NAMES = ('view_label', 'target_label', 'all_on_button', 'all_off_button', 'groups_button',
-             'groups_panel', 'search_box', 'worksets_panel', 'content_panel', 'legend_panel',
-             'allow_template_box', 'save_button', 'load_button', 'status_label')
+    NAMES = ('tabs', 'view_label', 'target_label', 'legend_panel', 'allow_template_box',
+             'save_button', 'load_button', 'status_label',
+             # рабочие наборы
+             'all_on_button', 'all_off_button', 'groups_button', 'groups_panel', 'search_box',
+             'worksets_panel', 'content_panel',
+             # категории
+             'cat_all_on_button', 'cat_all_off_button', 'cat_setup_button', 'cat_content_panel',
+             'model_header', 'model_panel', 'annotation_header', 'annotation_panel')
 
     def __init__(self, host):
         self.host = host
@@ -107,10 +128,8 @@ class Controller(object):
         for name in self.NAMES:
             setattr(self, name, self.root.FindName(name))
         self.tile_style = self.root.FindResource('Tile')
-        self.item_width = TILE_MIN_WIDTH
-        self.wraps = []
-        self.content_panel.SizeChanged += self.on_resize
-        self.build_legend()
+        self.widths = {'ws': TILE_MIN_WIDTH, 'cat': TILE_MIN_WIDTH}
+        self.wraps = {'ws': [], 'cat': []}
         self.profile = vm_profile.load()
         self.snap = None
         self.doc = None
@@ -119,11 +138,18 @@ class Controller(object):
         self.dirty = True
         self.busy = False
         self.detached = False
+        self.build_legend()
         self.allow_template_box.IsChecked = self.profile['allow_template']
+        self.content_panel.SizeChanged += self.on_ws_resize
+        self.cat_content_panel.SizeChanged += self.on_cat_resize
+        self.tabs.SelectionChanged += self.on_tab
         self.all_on_button.Click += self.on_all_on
         self.all_off_button.Click += self.on_all_off
         self.groups_button.Click += self.on_edit_groups
         self.search_box.TextChanged += self.on_search
+        self.cat_all_on_button.Click += self.on_cat_all_on
+        self.cat_all_off_button.Click += self.on_cat_all_off
+        self.cat_setup_button.Click += self.on_cat_setup
         self.allow_template_box.Click += self.on_allow_template
         self.save_button.Click += self.on_save_profile
         self.load_button.Click += self.on_load_profile
@@ -157,14 +183,14 @@ class Controller(object):
             view = uidoc.ActiveView
             self.doc = uidoc.Document
             self.view_id = view.Id if view is not None else None
-            self.snap = vm_revit.snapshot(self.doc, view, self.profile['allow_template'])
+            self.snap = vm_revit.snapshot(self.doc, view, self.profile)
         self.render()
 
     # ---------- запросы к Revit ----------
-    def request(self, kind, names=None, show=None, label=u''):
+    def request(self, kind, **payload):
         if self.pending is not None or self.detached:
             return
-        self.pending = (kind, self.doc, self.view_id, list(names or []), show, label)
+        self.pending = (kind, self.doc, self.view_id, payload)
         self.set_busy(True)
         try:
             result = self.host.event.Raise()
@@ -183,7 +209,7 @@ class Controller(object):
         try:
             if req is None:
                 return
-            kind, doc, view_id, names, show, label = req
+            kind, doc, view_id, p = req
             if kind == 'refresh':
                 self.refresh(uiapp)
                 return
@@ -193,16 +219,21 @@ class Controller(object):
                 self.refresh(uiapp)
                 self.status(u'Вид изменился. Повторите действие на нужном виде.')
                 return
-            changed, missing = vm_revit.set_worksets(
-                doc, uidoc.ActiveView, names, show, self.profile['allow_template'], label)
+            allow = self.profile['allow_template']
+            if kind == 'worksets':
+                changed, missing = vm_revit.set_worksets(
+                    doc, uidoc.ActiveView, p['names'], p['show'], allow, p['label'])
+                extra = u' Нет в модели: {0}.'.format(missing) if missing else u''
+            else:
+                changed, skipped = vm_revit.set_categories(
+                    doc, uidoc.ActiveView, p['keys'], p['show'], allow, p['label'])
+                extra = u' Недоступно на этом виде: {0}.'.format(skipped) if skipped else u''
             self.refresh(uiapp)
             if changed:
-                msg = (u'Включено' if show else u'Выключено') + u': {0}.'.format(changed)
+                msg = (u'Включено' if p['show'] else u'Выключено') + u': {0}.'.format(changed)
             else:
                 msg = u'Без изменений.'
-            if missing:
-                msg += u' Нет в модели: {0}.'.format(missing)
-            self.status(msg)
+            self.status(msg + extra)
         except vm_revit.ViewManagerError as exc:
             self._safe_refresh(uiapp)
             self.status(unicode(exc))
@@ -218,62 +249,91 @@ class Controller(object):
         except Exception:
             pass
 
-    # ---------- отрисовка ----------
+    # ---------- состояние ----------
     def status(self, text):
         self.status_label.Text = text
 
-    def visibility(self):
-        if not self.snap:
-            return {}
-        return dict((w['name'], w['visible']) for w in self.snap['worksets'])
-
-    def can_edit(self):
+    def can_edit(self, scope):
         s = self.snap
-        return bool(s and s['supported'] and s['workshared'] and not s['blocked'] and not self.busy)
+        if not s or not s['supported'] or self.busy:
+            return False
+        if scope == 'worksets' and not s['workshared']:
+            return False
+        return not s['blocked'].get(scope, False)
 
     def set_busy(self, busy):
         self.busy = busy
         self.update_enabled()
 
     def update_enabled(self):
-        ok = self.can_edit()
+        ws = self.can_edit('worksets')
         for ctl in (self.all_on_button, self.all_off_button, self.groups_panel, self.worksets_panel):
-            ctl.IsEnabled = ok
-        for ctl in (self.groups_button, self.allow_template_box, self.save_button, self.load_button):
+            ctl.IsEnabled = ws
+        for kind in KINDS:
+            getattr(self, kind + '_panel').IsEnabled = self.can_edit(kind)
+        any_cat = self.can_edit('model') or self.can_edit('annotation')
+        self.cat_all_on_button.IsEnabled = any_cat
+        self.cat_all_off_button.IsEnabled = any_cat
+        for ctl in (self.groups_button, self.cat_setup_button, self.allow_template_box,
+                    self.save_button, self.load_button):
             ctl.IsEnabled = not self.busy
 
+    # ---------- отрисовка ----------
     def render(self):
         self.render_header()
-        self.render_groups()
-        self.render_worksets()
+        self.render_ws_area()
+        self.render_categories()
         self.update_enabled()
+
+    def current_scopes(self):
+        if self.tabs.SelectedIndex == 1:
+            return ('model', 'annotation')
+        return ('worksets',)
 
     def render_header(self):
         s = self.snap
+        inlines = self.target_label.Inlines
+        inlines.Clear()
         if s is None:
             self.view_label.Text = u'Откройте модель Revit.'
-            self.target_label.Text = u''
             return
         self.view_label.Text = u'{0} — {1}'.format(s['doc_title'], s['view_name'])
-        self.target_label.Foreground = Brushes.Gray
         if not s['supported']:
-            self.target_label.Text = u'Откройте план, разрез, фасад или 3D-вид проекта.'
-        elif not s['workshared']:
-            self.target_label.Text = u'В модели нет рабочих наборов.'
-        elif s['template'] is None:
-            self.target_label.Text = u'Изменения вносятся в вид.'
-        elif not s['template']['controlled']:
-            self.target_label.Text = (u'Шаблон «{0}» не управляет рабочими наборами. '
-                                      u'Изменения вносятся в вид.').format(s['template']['name'])
-        elif s['blocked']:
-            self.target_label.Foreground = Brushes.Firebrick
-            self.target_label.Text = (u'Шаблон «{0}» управляет рабочими наборами. Чтобы менять их, '
-                                      u'поставьте галочку «Разрешаю менять шаблон вида».'
-                                      ).format(s['template']['name'])
-        else:
-            self.target_label.Foreground = Brushes.DarkOrange
-            self.target_label.Text = (u'Изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
-                                      ).format(s['template']['name'], s['template']['uses'])
+            self._line(u'Откройте план, разрез, фасад или 3D-вид проекта.', TEXT_GRAY)
+            return
+        scopes = self.current_scopes()
+        if scopes == ('worksets',) and not s['workshared']:
+            self._line(u'В модели нет рабочих наборов.', TEXT_GRAY)
+            return
+        for scope in scopes:
+            text, brush = self.target_text(scope)
+            if scope in KIND_TITLES:
+                text = u'{0}: {1}'.format(KIND_TITLES[scope], text)
+            else:
+                text = text[:1].upper() + text[1:]
+            self._line(text, brush)
+
+    def _line(self, text, brush):
+        inlines = self.target_label.Inlines
+        if inlines.Count:
+            inlines.Add(LineBreak())
+        run = Run(text)
+        run.Foreground = brush
+        inlines.Add(run)
+
+    def target_text(self, scope):
+        t = self.snap['targets'][scope]
+        what = vm_revit.SCOPE_TITLES[scope]
+        if not t['has_template']:
+            return u'изменения вносятся в вид.', TEXT_GRAY
+        if not t['controlled']:
+            return (u'шаблон «{0}» не управляет {1} — изменения вносятся в вид.'
+                    .format(t['name'], what)), TEXT_GRAY
+        if self.snap['blocked'][scope]:
+            return (u'шаблон «{0}» управляет {1}. Чтобы менять, поставьте галочку '
+                    u'«Разрешаю менять шаблон вида».'.format(t['name'], what)), TEXT_RED
+        return (u'изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
+                .format(t['name'], t['uses'])), TEXT_ORANGE
 
     # ---------- плитки ----------
     def build_legend(self):
@@ -292,20 +352,25 @@ class Controller(object):
             self.legend_panel.Children.Add(swatch)
             self.legend_panel.Children.Add(label)
 
-    def on_resize(self, sender, args):
-        width = self.content_panel.ActualWidth
+    def on_ws_resize(self, sender, args):
+        self._resize('ws', sender.ActualWidth)
+
+    def on_cat_resize(self, sender, args):
+        self._resize('cat', sender.ActualWidth - 22)   # отступ содержимого Expander
+
+    def _resize(self, area, width):
         if width <= 0:
             return
         columns = max(1, int(width // TILE_MIN_WIDTH))
-        self.item_width = width / columns
-        for wrap in self.wraps:
-            wrap.ItemWidth = self.item_width
+        self.widths[area] = width / columns
+        for wrap in self.wraps[area]:
+            wrap.ItemWidth = self.widths[area]
 
-    def new_wrap(self, wrap=None):
+    def new_wrap(self, area, wrap=None):
         if wrap is None:
             wrap = WrapPanel()
-        wrap.ItemWidth = self.item_width
-        self.wraps.append(wrap)
+        wrap.ItemWidth = self.widths[area]
+        self.wraps[area].append(wrap)
         return wrap
 
     def tile(self, text, state, tooltip, tag, handler):
@@ -322,16 +387,26 @@ class Controller(object):
         b.Click += handler
         return b
 
+    # ---------- вкладка «Рабочие наборы» ----------
+    def visibility(self):
+        if not self.snap:
+            return {}
+        return dict((w['name'], w['visible']) for w in self.snap['worksets'])
+
+    def render_ws_area(self):
+        self.wraps['ws'] = []
+        self.render_groups()
+        self.render_worksets()
+
     def render_groups(self):
         panel = self.groups_panel
         panel.Children.Clear()
-        self.wraps = [w for w in self.wraps if w is not panel]
-        self.new_wrap(panel)
         groups = self.profile['groups']
         if not groups:
             panel.ItemWidth = float('nan')
             panel.Children.Add(_text(u'Групп пока нет — нажмите «Группы…».', gray=True))
             return
+        self.new_wrap('ws', panel)
         vis = self.visibility()
         for index, group in enumerate(groups):
             states = [vis[n] for n in group['worksets'] if n in vis]
@@ -351,7 +426,6 @@ class Controller(object):
     def render_worksets(self):
         panel = self.worksets_panel
         panel.Children.Clear()
-        self.wraps = [w for w in self.wraps if w is self.groups_panel]
         if not self.snap or not self.snap['worksets']:
             return
         query = self.search_box.Text
@@ -369,22 +443,24 @@ class Controller(object):
             header.FontWeight = FontWeights.Bold
             header.Margin = Thickness(0, 4, 0, 1)
             panel.Children.Add(header)
-            wrap = self.new_wrap()
+            wrap = self.new_wrap('ws')
             for item in items:
                 state = 'on' if item['visible'] else 'off'
                 wrap.Children.Add(self.tile(item['name'], state, item['name'],
                                             (item['name'], item['visible']), self.on_workset_tile))
             panel.Children.Add(wrap)
 
-    # ---------- обработчики ----------
     def all_names(self):
         return [w['name'] for w in self.snap['worksets']] if self.snap else []
 
+    def set_worksets(self, names, show, label):
+        self.request('worksets', names=list(names), show=show, label=label)
+
     def on_all_on(self, sender, args):
-        self.request('set', self.all_names(), True, u'все рабочие наборы — On')
+        self.set_worksets(self.all_names(), True, u'все рабочие наборы — On')
 
     def on_all_off(self, sender, args):
-        self.request('set', self.all_names(), False, u'все рабочие наборы — Off')
+        self.set_worksets(self.all_names(), False, u'все рабочие наборы — Off')
 
     def on_group_tile(self, sender, args):
         index, state = sender.Tag
@@ -393,17 +469,104 @@ class Controller(object):
             self.status(u'Рабочих наборов группы «{0}» нет в этой модели.'.format(group['name']))
             return
         show = state != 'on'   # частично или выключено -> включить; включено -> выключить
-        self.request('set', group['worksets'], show,
-                     u'{0} — {1}'.format(group['name'], u'On' if show else u'Off'))
+        self.set_worksets(group['worksets'], show,
+                          u'{0} — {1}'.format(group['name'], u'On' if show else u'Off'))
 
     def on_workset_tile(self, sender, args):
         name, visible = sender.Tag
         show = not visible
-        self.request('set', [name], show, u'{0} — {1}'.format(name, u'On' if show else u'Off'))
+        self.set_worksets([name], show, u'{0} — {1}'.format(name, u'On' if show else u'Off'))
 
     def on_search(self, sender, args):
-        self.render_worksets()
+        self.render_ws_area()
         self.update_enabled()
+
+    def on_edit_groups(self, sender, args):
+        editor = GroupEditor(self.all_names(), self.profile['groups'], self.uiapp.MainWindowHandle)
+        result = editor.show()
+        if result is None:
+            return
+        self.profile['groups'] = result
+        self.save_profile()
+        self.render_ws_area()
+        self.update_enabled()
+        self.status(u'Группы сохранены.')
+
+    # ---------- вкладка «Категории» ----------
+    def render_categories(self):
+        self.wraps['cat'] = []
+        for kind in KINDS:
+            panel = getattr(self, kind + '_panel')
+            header = getattr(self, kind + '_header')
+            panel.Children.Clear()
+            items = self.snap['categories'][kind] if self.snap else []
+            keys = self.profile['categories'][kind]
+            on = sum(1 for i in items if i['visible'])
+            header.Text = u'{0}   {1}/{2}'.format(KIND_TITLES[kind], on, len(keys))
+            if not keys:
+                panel.ItemWidth = float('nan')
+                panel.Children.Add(_text(u'Не выбрано — нажмите «Настроить…».', gray=True))
+                continue
+            self.new_wrap('cat', panel)
+            if not items:   # нет модели / неподходящий вид — показываем по профилю
+                names = dict(self.snap['catalog'][kind]) if self.snap else {}
+                items = [{'key': k, 'name': names.get(k, k), 'exists': True, 'available': False,
+                          'visible': False} for k in keys]
+            for item in items:
+                if not item['exists']:
+                    state, tip = 'none', u'{0}\nНет такой категории в этой модели.'.format(item['name'])
+                elif not item['available']:
+                    state, tip = 'none', u'{0}\nКатегорию нельзя скрыть на этом виде.'.format(item['name'])
+                else:
+                    state, tip = ('on' if item['visible'] else 'off'), item['name']
+                panel.Children.Add(self.tile(item['name'], state, tip,
+                                             (kind, item['key'], item['visible'], state, item['name']),
+                                             self.on_category_tile))
+
+    def set_categories(self, keys_by_kind, show, label):
+        self.request('categories', keys=keys_by_kind, show=show, label=label)
+
+    def on_category_tile(self, sender, args):
+        kind, key, visible, state, name = sender.Tag
+        if state == 'none':
+            self.status(sender.ToolTip)
+            return
+        show = not visible
+        self.set_categories({kind: [key]}, show, u'категория «{0}» — {1}'.format(
+            name, u'On' if show else u'Off'))
+
+    def _all_categories(self, show):
+        keys = dict((kind, list(self.profile['categories'][kind])) for kind in KINDS
+                    if self.can_edit(kind))
+        if not any(keys.values()):
+            self.status(u'Нет быстрых категорий, которые можно изменить на этом виде.')
+            return
+        self.set_categories(keys, show, u'все быстрые категории — {0}'.format(u'On' if show else u'Off'))
+
+    def on_cat_all_on(self, sender, args):
+        self._all_categories(True)
+
+    def on_cat_all_off(self, sender, args):
+        self._all_categories(False)
+
+    def on_cat_setup(self, sender, args):
+        catalog = self.snap['catalog'] if self.snap else {'model': [], 'annotation': []}
+        if not catalog['model'] and not catalog['annotation']:
+            self.status(u'Откройте модель проекта, чтобы выбрать категории.')
+            return
+        editor = CategoryEditor(catalog, self.profile['categories'], self.uiapp.MainWindowHandle)
+        result = editor.show()
+        if result is None:
+            return
+        self.profile['categories'] = result
+        self.save_profile()
+        self.status(u'Быстрые категории сохранены.')
+        self.request('refresh')
+
+    # ---------- общее ----------
+    def on_tab(self, sender, args):
+        if sender.Equals(args.OriginalSource):
+            self.render_header()
 
     def on_allow_template(self, sender, args):
         self.profile['allow_template'] = bool(self.allow_template_box.IsChecked)
@@ -415,17 +578,6 @@ class Controller(object):
             vm_profile.save(self.profile)
         except Exception as exc:
             self.status(u'Не удалось сохранить настройки: {0}'.format(unicode(exc)))
-
-    def on_edit_groups(self, sender, args):
-        editor = GroupEditor(self.all_names(), self.profile['groups'], self.uiapp.MainWindowHandle)
-        result = editor.show()
-        if result is None:
-            return
-        self.profile['groups'] = result
-        self.save_profile()
-        self.render_groups()
-        self.update_enabled()
-        self.status(u'Группы сохранены.')
 
     def on_save_profile(self, sender, args):
         dlg = SaveFileDialog()
@@ -457,6 +609,120 @@ class Controller(object):
         self.request('refresh')
 
 
+class CategoryEditor(object):
+    """Модальное окно выбора быстрых категорий: вкладки «Элементы» и «Аннотации»."""
+
+    def __init__(self, catalog, chosen, owner_hwnd):
+        self.win = _load_xaml('vm_categories.xaml')
+        self.tabs = self.win.FindName('tabs')
+        self.win.FindName('ok_button').Click += self.on_ok
+        _owner_window(self.win, owner_hwnd)
+        self.catalog = catalog
+        self.chosen = dict((kind, list(chosen.get(kind, []))) for kind in KINDS)
+        self.result = None
+        self.parts = {}
+        for kind in KINDS:
+            self.tabs.Items.Add(self.build_tab(kind))
+            self.render(kind)
+
+    @staticmethod
+    def _handler(func, *bound):
+        """Обработчик события WPF (sender, args), вызывающий func(*bound)."""
+        def handler(sender, args):
+            func(*bound)
+        return handler
+
+    def build_tab(self, kind):
+        dock = DockPanel()
+        dock.Margin = Thickness(4)
+        top = StackPanel()
+        DockPanel.SetDock(top, Dock.Top)
+        search = TextBox()
+        search.Margin = Thickness(0, 0, 0, 4)
+        search.ToolTip = u'Поиск категории'
+        search.TextChanged += self._handler(self.render, kind)
+        buttons = WrapPanel()
+        buttons.Margin = Thickness(0, 0, 0, 4)
+        for caption, value in ((u'Отметить найденные', True), (u'Снять с найденных', False)):
+            b = Button()
+            b.Content = caption
+            b.Padding = Thickness(6, 2, 6, 2)
+            b.Margin = Thickness(0, 0, 4, 0)
+            b.Click += self._handler(self.set_shown, kind, value)
+            buttons.Children.Add(b)
+        count = _text(u'', gray=True)
+        count.Margin = Thickness(8, 0, 0, 0)
+        buttons.Children.Add(count)
+        top.Children.Add(search)
+        top.Children.Add(buttons)
+        dock.Children.Add(top)
+        scroll = ScrollViewer()
+        scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        listing = StackPanel()
+        listing.Margin = Thickness(2)
+        scroll.Content = listing
+        dock.Children.Add(scroll)
+        tab = TabItem()
+        tab.Header = KIND_TITLES[kind]
+        tab.Content = dock
+        self.parts[kind] = {'search': search, 'list': listing, 'count': count}
+        return tab
+
+    def render(self, kind):
+        part = self.parts[kind]
+        listing = part['list']
+        listing.Children.Clear()
+        chosen = self.chosen[kind]
+        known = [k for k, _ in self.catalog[kind]]
+        rows = list(self.catalog[kind]) + [(k, k) for k in chosen if k not in known]
+        query = part['search'].Text
+        for key, name in rows:
+            if not _matches(name, query):
+                continue
+            cb = CheckBox()
+            cb.Tag = (kind, key)
+            cb.IsChecked = key in chosen
+            cb.Margin = Thickness(0, 2, 0, 2)
+            cb.Content = _text(name if key in known else name + u'  — нет в этой модели',
+                               gray=key not in known)
+            cb.Click += self.on_check
+            listing.Children.Add(cb)
+        self.update_count(kind)
+
+    def update_count(self, kind):
+        self.parts[kind]['count'].Text = u'выбрано: {0}'.format(len(self.chosen[kind]))
+
+    def set_one(self, kind, key, on):
+        chosen = self.chosen[kind]
+        if on and key not in chosen:
+            chosen.append(key)
+        elif not on and key in chosen:
+            chosen.remove(key)
+
+    def on_check(self, sender, args):
+        kind, key = sender.Tag
+        self.set_one(kind, key, bool(sender.IsChecked))
+        self.update_count(kind)
+
+    def set_shown(self, kind, on):
+        for cb in self.parts[kind]['list'].Children:
+            cb.IsChecked = on
+            self.set_one(kind, cb.Tag[1], on)
+        self.update_count(kind)
+
+    def show(self):
+        self.win.ShowDialog()
+        return self.result
+
+    def on_ok(self, sender, args):
+        for kind in KINDS:
+            order = dict((k, i) for i, (k, _) in enumerate(self.catalog[kind]))
+            self.chosen[kind].sort(key=lambda k: (order.get(k, len(order)), k))
+        self.result = self.chosen
+        self.win.DialogResult = True
+
+
 class GroupEditor(object):
     """Модальное окно: список групп, название, состав рабочих наборов."""
 
@@ -468,10 +734,7 @@ class GroupEditor(object):
         self.win = _load_xaml('vm_groups.xaml')
         for name in self.NAMES:
             setattr(self, name, self.win.FindName(name))
-        try:
-            WindowInteropHelper(self.win).Owner = owner_hwnd
-        except Exception:
-            pass
+        _owner_window(self.win, owner_hwnd)
         self.model_names = list(model_names)
         self.groups = copy.deepcopy(groups)
         self.current = None

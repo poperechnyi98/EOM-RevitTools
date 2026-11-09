@@ -39,7 +39,7 @@
     <RowDefinition Height="Auto"/>
   </Grid.RowDefinitions>
 
-  <TabControl Grid.Row="0" Margin="4,6,4,0">
+  <TabControl x:Name="tabs" Grid.Row="0" Margin="4,6,4,0">
     <TabItem Header="Рабочие наборы">
       <DockPanel Margin="2">
         <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="True">
@@ -62,8 +62,32 @@
       </DockPanel>
     </TabItem>
     <TabItem Header="Категории">
-      <TextBlock Margin="8" TextWrapping="Wrap"
-                 Text="Этап 2: быстрые категории — вкладки «Элементы» и «Аннотации»."/>
+      <DockPanel Margin="2">
+        <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="False">
+          <Button x:Name="cat_all_on_button" DockPanel.Dock="Left" Content="All On" Padding="8,2" Margin="0,0,4,0"
+                  ToolTip="Показать все быстрые категории"/>
+          <Button x:Name="cat_all_off_button" DockPanel.Dock="Left" Content="All Off" Padding="8,2"
+                  ToolTip="Скрыть все быстрые категории"/>
+          <Button x:Name="cat_setup_button" DockPanel.Dock="Right" Content="Настроить…" Padding="8,2"
+                  ToolTip="Выбрать быстрые категории элементов и аннотаций"/>
+        </DockPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="cat_content_panel" Margin="0,0,2,0">
+            <Expander x:Name="model_expander" IsExpanded="True" Margin="0,0,0,6">
+              <Expander.Header>
+                <TextBlock x:Name="model_header" FontWeight="Bold" Text="Элементы"/>
+              </Expander.Header>
+              <WrapPanel x:Name="model_panel" Margin="0,2,0,0"/>
+            </Expander>
+            <Expander x:Name="annotation_expander" IsExpanded="True">
+              <Expander.Header>
+                <TextBlock x:Name="annotation_header" FontWeight="Bold" Text="Аннотации"/>
+              </Expander.Header>
+              <WrapPanel x:Name="annotation_panel" Margin="0,2,0,0"/>
+            </Expander>
+          </StackPanel>
+        </ScrollViewer>
+      </DockPanel>
     </TabItem>
   </TabControl>
 

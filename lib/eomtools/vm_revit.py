@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""View Manager: чтение и изменение видимости рабочих наборов на активном виде.
+"""View Manager: чтение и изменение видимости на активном виде.
 
 Вызывать только из контекста Revit API (ExternalEvent, Idling), не напрямую из WPF.
 
-Куда пишутся изменения:
-- у вида нет шаблона, или шаблон не управляет пунктом «Рабочие наборы» —
-  в настройки самого вида (как «Видимость/Графика» → «Рабочие наборы»);
-- шаблон управляет рабочими наборами — в шаблон, если это разрешено
-  в настройках View Manager; иначе изменение не делается.
+Куда пишутся изменения (отдельно для рабочих наборов, модельных категорий и
+категорий аннотаций — это три разных пункта шаблона вида):
+- у вида нет шаблона, или шаблон не управляет этим пунктом — в сам вид
+  (как «Видимость/Графика»);
+- шаблон управляет пунктом — в шаблон, если это разрешено в настройках
+  View Manager; иначе изменение не делается.
 
 Каждое действие — одна транзакция «View Manager: …», отменяется Ctrl+Z.
 """
@@ -17,15 +18,25 @@ except NameError:
     unicode = str
 
 from Autodesk.Revit.DB import (
-    BuiltInParameter, ElementId, FilteredElementCollector, FilteredWorksetCollector,
-    Transaction, TransactionStatus, View, ViewType, WorksetDefaultVisibilitySettings,
-    WorksetKind, WorksetVisibility)
+    BuiltInCategory, BuiltInParameter, Category, CategoryType, ElementId,
+    FilteredElementCollector, FilteredWorksetCollector, Transaction, TransactionStatus, View,
+    ViewType, WorksetDefaultVisibilitySettings, WorksetKind, WorksetVisibility)
 
 SUPPORTED_TYPES = (
     ViewType.ThreeD, ViewType.FloorPlan, ViewType.CeilingPlan, ViewType.EngineeringPlan,
     ViewType.AreaPlan, ViewType.Section, ViewType.Elevation, ViewType.Detail)
 
 TX_PREFIX = u'View Manager: '
+
+# что меняем -> пункт шаблона вида, который этим управляет
+SCOPES = {
+    'worksets': BuiltInParameter.VIS_GRAPHICS_WORKSETS,
+    'model': BuiltInParameter.VIS_GRAPHICS_MODEL,
+    'annotation': BuiltInParameter.VIS_GRAPHICS_ANNOTATION,
+}
+SCOPE_TITLES = {'worksets': u'рабочими наборами', 'model': u'модельными категориями',
+                'annotation': u'категориями аннотаций'}
+CATEGORY_TYPES = {'model': CategoryType.Model, 'annotation': CategoryType.Annotation}
 
 
 class ViewManagerError(Exception):
@@ -43,30 +54,61 @@ def supported(view):
     return view is not None and not view.IsTemplate and view.ViewType in SUPPORTED_TYPES
 
 
-def template_info(doc, view, parameter):
-    """Шаблон вида и управляет ли он пунктом ``parameter`` (BuiltInParameter)."""
-    info = {'template': None, 'name': u'', 'controlled': False, 'uses': 0}
+# ---------- вид или шаблон ----------
+def targets(doc, view):
+    """Для каждого пункта: шаблон, управляет ли он пунктом, сколько видов с ним."""
+    result = dict((scope, {'template': None, 'name': u'', 'controlled': False, 'uses': 0})
+                  for scope in SCOPES)
     tid = view.ViewTemplateId
     if tid is None or _id_value(tid) < 0:
-        return info
+        return result
     template = doc.GetElement(tid)
     if template is None:
-        return info
-    info['template'] = template
-    info['name'] = template.Name
-    pid = _id_value(ElementId(parameter))
+        return result
     free = set(_id_value(x) for x in template.GetNonControlledTemplateParameterIds())
-    info['controlled'] = pid not in free
-    if info['controlled']:
-        tval = _id_value(tid)
-        uses = 0
-        for v in FilteredElementCollector(doc).OfClass(View):
-            if not v.IsTemplate and _id_value(v.ViewTemplateId) == tval:
-                uses += 1
-        info['uses'] = uses
-    return info
+    uses = None
+    for scope, param in SCOPES.items():
+        info = result[scope]
+        info['template'] = template
+        info['name'] = template.Name
+        info['controlled'] = _id_value(ElementId(param)) not in free
+        if info['controlled']:
+            if uses is None:
+                tval = _id_value(tid)
+                uses = sum(1 for v in FilteredElementCollector(doc).OfClass(View)
+                           if not v.IsTemplate and _id_value(v.ViewTemplateId) == tval)
+            info['uses'] = uses
+    return result
 
 
+def _owner(view, info, scope, allow_template):
+    if not info['controlled']:
+        return view
+    if not allow_template:
+        raise ViewManagerError(
+            u'Шаблон «{0}» управляет {1}, а изменение шаблона запрещено в настройках '
+            u'View Manager.'.format(info['name'], SCOPE_TITLES[scope]))
+    return info['template']
+
+
+def _run(doc, label, action):
+    if doc.IsReadOnly:
+        raise ViewManagerError(u'Модель открыта только для чтения.')
+    tx = Transaction(doc, TX_PREFIX + label)
+    tx.Start()
+    try:
+        action()
+        if tx.Commit() != TransactionStatus.Committed:
+            raise ViewManagerError(u'Revit не сохранил изменения видимости.')
+    except Exception:
+        if tx.GetStatus() == TransactionStatus.Started:
+            tx.RollBack()
+        raise
+    finally:
+        tx.Dispose()
+
+
+# ---------- рабочие наборы ----------
 def user_worksets(doc):
     """[(имя, WorksetId)] пользовательских рабочих наборов, по имени."""
     if not doc.IsWorkshared:
@@ -77,7 +119,7 @@ def user_worksets(doc):
     return items
 
 
-def _visible(doc, owner, wsid, defaults):
+def _workset_visible(owner, wsid, defaults):
     state = owner.GetWorksetVisibility(wsid)
     if state == WorksetVisibility.Visible:
         return True
@@ -86,50 +128,11 @@ def _visible(doc, owner, wsid, defaults):
     return defaults.IsWorksetVisible(wsid)
 
 
-def _owner(doc, view, allow_template):
-    """Вид или шаблон, в который пишется видимость рабочих наборов."""
-    info = template_info(doc, view, BuiltInParameter.VIS_GRAPHICS_WORKSETS)
-    if not info['controlled']:
-        return view, info
-    if not allow_template:
-        raise ViewManagerError(
-            u'Шаблон «{0}» управляет рабочими наборами, а изменение шаблона запрещено '
-            u'в настройках View Manager.'.format(info['name']))
-    return info['template'], info
-
-
-def snapshot(doc, view, allow_template):
-    """Состояние активного вида для панели."""
-    snap = {
-        'doc_title': doc.Title, 'view_name': view.Name if view is not None else u'',
-        'supported': False, 'workshared': doc.IsWorkshared, 'worksets': [],
-        'template': None, 'blocked': False,
-    }
-    if doc.IsFamilyDocument or not supported(view):
-        return snap
-    snap['supported'] = True
-    info = template_info(doc, view, BuiltInParameter.VIS_GRAPHICS_WORKSETS)
-    snap['template'] = {'name': info['name'], 'controlled': info['controlled'],
-                        'uses': info['uses']} if info['template'] is not None else None
-    snap['blocked'] = info['controlled'] and not allow_template
-    if not doc.IsWorkshared:
-        return snap
-    owner = info['template'] if info['controlled'] else view
-    defaults = WorksetDefaultVisibilitySettings.GetWorksetDefaultVisibilitySettings(doc)
-    snap['worksets'] = [{'name': name, 'visible': _visible(doc, owner, wsid, defaults)}
-                        for name, wsid in user_worksets(doc)]
-    return snap
-
-
 def set_worksets(doc, view, names, show, allow_template, label):
-    """Показать/скрыть рабочие наборы по именам одной транзакцией.
-
-    Возвращает (изменено, не найдено в модели)."""
-    if doc.IsReadOnly:
-        raise ViewManagerError(u'Модель открыта только для чтения.')
+    """Показать/скрыть рабочие наборы по именам. Возвращает (изменено, нет в модели)."""
     if not doc.IsWorkshared:
         raise ViewManagerError(u'В модели нет рабочих наборов.')
-    owner, _ = _owner(doc, view, allow_template)
+    owner = _owner(view, targets(doc, view)['worksets'], 'worksets', allow_template)
     by_name = dict(user_worksets(doc))
     defaults = WorksetDefaultVisibilitySettings.GetWorksetDefaultVisibilitySettings(doc)
     target = WorksetVisibility.Visible if show else WorksetVisibility.Hidden
@@ -138,21 +141,127 @@ def set_worksets(doc, view, names, show, allow_template, label):
         wsid = by_name.get(name)
         if wsid is None:
             missing += 1
-        elif _visible(doc, owner, wsid, defaults) != show:
+        elif _workset_visible(owner, wsid, defaults) != show:
             todo.append(wsid)
-    if not todo:
-        return 0, missing
-    tx = Transaction(doc, TX_PREFIX + label)
-    tx.Start()
-    try:
-        for wsid in todo:
-            owner.SetWorksetVisibility(wsid, target)
-        if tx.Commit() != TransactionStatus.Committed:
-            raise ViewManagerError(u'Revit не сохранил изменения видимости.')
-    except Exception:
-        if tx.GetStatus() == TransactionStatus.Started:
-            tx.RollBack()
-        raise
-    finally:
-        tx.Dispose()
+    if todo:
+        def action():
+            for wsid in todo:
+                owner.SetWorksetVisibility(wsid, target)
+        _run(doc, label, action)
     return len(todo), missing
+
+
+# ---------- категории ----------
+def _bic_key(category):
+    bic = getattr(category, 'BuiltInCategory', None)
+    if bic is None or int(bic) == -1:
+        try:
+            from System import Enum
+            bic = Enum.ToObject(BuiltInCategory, int(_id_value(category.Id)))
+        except Exception:
+            return None
+    key = unicode(bic)
+    if not key.startswith(u'OST_'):
+        return None
+    return key
+
+
+def _category(doc, key):
+    try:
+        bic = getattr(BuiltInCategory, key)
+    except Exception:
+        return None
+    try:
+        return Category.GetCategory(doc, bic)
+    except Exception:
+        return None
+
+
+def category_catalog(doc):
+    """Все категории верхнего уровня: {'model': [(ключ, имя)], 'annotation': [...]}."""
+    result = {'model': [], 'annotation': []}
+    for cat in doc.Settings.Categories:
+        if getattr(cat, 'IsVisibleInUI', True) is False:
+            continue
+        for kind, ctype in CATEGORY_TYPES.items():
+            if cat.CategoryType == ctype:
+                key = _bic_key(cat)
+                if key:
+                    result[kind].append((key, cat.Name))
+    for kind in result:
+        result[kind].sort(key=lambda x: x[1].lower())
+    return result
+
+
+def _category_states(doc, view, owner, keys):
+    items = []
+    for key in keys:
+        cat = _category(doc, key)
+        if cat is None:
+            items.append({'key': key, 'name': key, 'exists': False, 'available': False,
+                          'visible': False})
+            continue
+        available = view.CanCategoryBeHidden(cat.Id)
+        visible = available and not owner.GetCategoryHidden(cat.Id)
+        items.append({'key': key, 'name': cat.Name, 'exists': True, 'available': available,
+                      'visible': visible})
+    return items
+
+
+def set_categories(doc, view, keys_by_kind, show, allow_template, label):
+    """Показать/скрыть категории одной транзакцией.
+
+    ``keys_by_kind`` — {'model': [ключи], 'annotation': [ключи]}. Возвращает (изменено, пропущено)."""
+    tg = targets(doc, view)
+    todo, skipped = [], 0
+    for kind, keys in keys_by_kind.items():
+        if not keys:
+            continue
+        owner = _owner(view, tg[kind], kind, allow_template)
+        for key in keys:
+            cat = _category(doc, key)
+            if cat is None or not view.CanCategoryBeHidden(cat.Id):
+                skipped += 1
+            elif owner.GetCategoryHidden(cat.Id) != (not show):
+                todo.append((owner, cat.Id))
+    if todo:
+        def action():
+            for owner, cid in todo:
+                owner.SetCategoryHidden(cid, not show)
+        _run(doc, label, action)
+    return len(todo), skipped
+
+
+# ---------- снимок для панели ----------
+def snapshot(doc, view, profile):
+    allow = profile['allow_template']
+    snap = {
+        'doc_title': doc.Title, 'view_name': view.Name if view is not None else u'',
+        'supported': False, 'workshared': doc.IsWorkshared, 'worksets': [],
+        'targets': None, 'blocked': {}, 'categories': {'model': [], 'annotation': []},
+        'catalog': {'model': [], 'annotation': []},
+    }
+    if doc.IsFamilyDocument:
+        return snap
+    snap['catalog'] = category_catalog(doc)
+    if not supported(view):
+        return snap
+    snap['supported'] = True
+    tg = targets(doc, view)
+    snap['targets'] = dict((s, {'name': i['name'], 'controlled': i['controlled'], 'uses': i['uses'],
+                                'has_template': i['template'] is not None})
+                           for s, i in tg.items())
+    snap['blocked'] = dict((s, i['controlled'] and not allow) for s, i in tg.items())
+
+    def owner_of(scope):
+        return tg[scope]['template'] if tg[scope]['controlled'] else view
+
+    for kind in ('model', 'annotation'):
+        snap['categories'][kind] = _category_states(doc, view, owner_of(kind),
+                                                    profile['categories'][kind])
+    if doc.IsWorkshared:
+        owner = owner_of('worksets')
+        defaults = WorksetDefaultVisibilitySettings.GetWorksetDefaultVisibilitySettings(doc)
+        snap['worksets'] = [{'name': name, 'visible': _workset_visible(owner, wsid, defaults)}
+                            for name, wsid in user_worksets(doc)]
+    return snap
