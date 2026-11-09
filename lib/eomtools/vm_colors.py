@@ -12,7 +12,13 @@
 Одинаковый РБ у нас и в связи (например, 2_КНК у нас и у СС) различаем параметром
 из настройки (по умолчанию SMNX_Фильтр — у наших элементов заполнен, у смежников нет):
 - наш:   «РБ = имя» и «параметр заполнен» → ``3_ВСЕ_РБ_<имя>``
-- связи: «РБ = имя» и «параметр пуст»     → ``3_ВСЕ_РБ_<имя>_связь``
+- связи: «РБ = имя»                       → ``3_ВСЕ_РБ_<имя>_связь``
+Фильтр связи всегда ставится НИЖЕ нашего: при пересечении в Revit побеждает верхний,
+поэтому наши элементы (параметр заполнен) получают наш цвет, остальные — цвет связи.
+Условие «параметр пуст» не годится: у смежников параметра может не быть вовсе.
+
+Условие по рабочему набору сравнивает ИМЯ (строковое правило), поэтому работает и
+внутри связей; окно «Фильтры» Revit показывает такое условие пустым — это нормально.
 
 Фильтры пишутся в вид или в его шаблон (если шаблон управляет фильтрами и это
 разрешено). «Снять» убирает с вида/шаблона только фильтры с префиксом ``3_ВСЕ_РБ_``;
@@ -224,6 +230,27 @@ def update_one(doc, view, fname, item, allow_template, label):
     return True
 
 
+def _links_below_own(doc, owner, shared):
+    """Фильтр «…_связь» должен стоять ниже нашего фильтра того же РБ: в Revit при
+    пересечении побеждает верхний. Переставляем, сохраняя настройки фильтра."""
+    order = [doc.GetElement(fid) for fid in owner.GetOrderedFilters()]
+    pos = dict((f.Name, i) for i, f in enumerate(order) if f is not None)
+    for name in shared:
+        own_name = filter_name({'name': name, 'scope': 'own'}, shared)
+        link_name = filter_name({'name': name, 'scope': 'link'}, shared)
+        if own_name not in pos or link_name not in pos or pos[link_name] > pos[own_name]:
+            continue
+        fid = order[pos[link_name]].Id
+        ogs = owner.GetFilterOverrides(fid)
+        visible = owner.GetFilterVisibility(fid)
+        enabled = owner.GetIsFilterEnabled(fid)
+        owner.RemoveFilter(fid)
+        owner.AddFilter(fid)                       # добавляется в конец списка
+        owner.SetFilterOverrides(fid, ogs)
+        owner.SetFilterVisibility(fid, visible)
+        owner.SetIsFilterEnabled(fid, enabled)
+
+
 def apply(doc, view, colors, allow_template, label):
     """Создать недостающие и обновить существующие фильтры схемы на виде (или шаблоне).
 
@@ -239,7 +266,7 @@ def apply(doc, view, colors, allow_template, label):
 
     items = [it for it in colors['items'] if it['enabled'] and it['name'] in existing_names]
     ws_param = ElementId(BuiltInParameter.ELEM_PARTITION_PARAM)
-    need_split = any(it['name'] in shared for it in items)
+    need_split = any(it['name'] in shared and it['scope'] == 'own' for it in items)
     split_param = None
     if need_split:
         split_param = _param_id_by_name(doc, colors['param'])
@@ -265,12 +292,12 @@ def apply(doc, view, colors, allow_template, label):
             rules = List[FilterRule]()
             rules.Add(_equals_rule(ws_param, it['name']))
             cats = cats_ws
-            if it['name'] in shared:
+            if it['name'] in shared and it['scope'] == 'own':
+                # наш: «РБ = имя» и «параметр заполнен». Для связи условия по параметру нет:
+                # у смежников параметра может не быть совсем, а «пуст» на таких не срабатывает.
+                # Наш фильтр стоит выше фильтра связи — он и побеждает на наших элементах.
                 cats = cats_split
-                if it['scope'] == 'own':
-                    rules.Add(ParameterFilterRuleFactory.CreateHasValueParameterRule(split_param))
-                else:
-                    rules.Add(ParameterFilterRuleFactory.CreateHasNoValueParameterRule(split_param))
+                rules.Add(ParameterFilterRuleFactory.CreateHasValueParameterRule(split_param))
             element_filter = ElementParameterFilter(rules)
             pfe = by_name.get(name)
             if pfe is None:
@@ -282,6 +309,7 @@ def apply(doc, view, colors, allow_template, label):
                 owner.AddFilter(pfe.Id)
             owner.SetFilterOverrides(pfe.Id, _overrides(it, solid_id))
             owner.SetFilterVisibility(pfe.Id, True)
+        _links_below_own(doc, owner, shared)
         result.append(len(wanted))
 
     result = []
