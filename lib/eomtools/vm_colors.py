@@ -184,8 +184,11 @@ def view_filters(doc, view, own_names):
         color = (_rgb(ogs.SurfaceForegroundPatternColor) or _rgb(ogs.ProjectionLineColor)
                  or _rgb(ogs.CutForegroundPatternColor))
         ws, scope = parse_filter_name(fname, own_names)
+        # 'enabled' здесь — видны ли элементы фильтра (галочка «Видимость»);
+        # выключенный фильтр («Включить фильтр» снят) элементы не скрывает — считаем видимым
+        visible = owner.GetFilterVisibility(fid) or not owner.GetIsFilterEnabled(fid)
         result.append({'filter': fname, 'name': ws, 'scope': scope,
-                       'enabled': owner.GetIsFilterEnabled(fid), 'color': color,
+                       'enabled': visible, 'color': color,
                        'transparency': int(ogs.Transparency)})
     result.sort(key=lambda x: x['filter'].lower())
     return result
@@ -197,12 +200,17 @@ def _applied_filter(doc, view, fname, allow_template):
     return owner, _our_filters(doc, owner).get(fname)
 
 
-def set_enabled(doc, view, fname, enabled, allow_template, label):
-    """Включить/выключить фильтр на виде. Возвращает False, если фильтра на виде нет."""
+def set_enabled(doc, view, fname, visible, allow_template, label):
+    """Показать/скрыть элементы фильтра на виде (галочка «Видимость»); сам фильтр
+    остаётся включённым, цвет сохраняется. False — фильтра на виде нет."""
     owner, fid = _applied_filter(doc, view, fname, allow_template)
     if fid is None:
         return False
-    vm_revit._run(doc, label, lambda: owner.SetIsFilterEnabled(fid, enabled))
+
+    def action():
+        owner.SetIsFilterEnabled(fid, True)
+        owner.SetFilterVisibility(fid, visible)
+    vm_revit._run(doc, label, action)
     return True
 
 

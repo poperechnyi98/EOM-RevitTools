@@ -739,8 +739,8 @@ class Controller(object):
         rows = self.color_rows()
         on_view = sum(1 for r in rows if r['on_view'])
         self.colors_state_label.Text = (
-            u'На виде фильтров 3_ВСЕ_РБ_: {0}, ещё в схеме: {1}. Плитка — вкл/выкл, '
-            u'квадрат — цвет, ползунок — прозрачность.'.format(on_view, len(rows) - on_view))
+            u'На виде фильтров 3_ВСЕ_РБ_: {0}, ещё в схеме: {1}. Плитка — показать/скрыть '
+            u'элементы, квадрат — цвет, ползунок — прозрачность.'.format(on_view, len(rows) - on_view))
         if not rows:
             panel.Children.Add(_text(u'На виде нет фильтров 3_ВСЕ_РБ_, схема пуста — нажмите ⚙.',
                                      gray=True))
@@ -772,9 +772,9 @@ class Controller(object):
                 tip = u'{0}\nТакого РБ нет в этой модели.'.format(row['name'])
         else:
             state = 'on' if row['enabled'] else 'off'
-            tip = u'{0}\nФильтр {1}: {2}. Нажмите, чтобы {3}.'.format(
-                row['name'], row['filter'], u'включён' if row['enabled'] else u'выключен',
-                u'выключить' if row['enabled'] else u'включить')
+            tip = u'{0}\nЭлементы {1}. Нажмите, чтобы {2}. Фильтр: {3}.'.format(
+                row['name'], u'видны' if row['enabled'] else u'скрыты',
+                u'скрыть' if row['enabled'] else u'показать', row['filter'])
         tile = self.tile(caption, state, tip, row, self.on_color_tile)
         color = row['color'] or [200, 200, 200]
         swatch = Button()
