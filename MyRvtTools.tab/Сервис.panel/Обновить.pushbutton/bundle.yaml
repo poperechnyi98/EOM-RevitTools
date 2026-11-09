@@ -1,0 +1,6 @@
+title: Обновить
+tooltip: >-
+  Скачивает последнюю версию расширения EOM-RevitTools с GitHub и перезагружает pyRevit.
+  Работает и там, где штатная кнопка pyRevit → Update пишет «No internet access detected».
+  Модель не изменяется.
+author: MyRvtTools
