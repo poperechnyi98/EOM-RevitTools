@@ -17,10 +17,15 @@ try:
 except NameError:
     unicode = str
 
+import uuid
+
 from Autodesk.Revit.DB import (
-    BuiltInCategory, BuiltInParameter, Category, CategoryType, ElementId,
-    FilteredElementCollector, FilteredWorksetCollector, Transaction, TransactionStatus, View,
-    ViewType, WorksetDefaultVisibilitySettings, WorksetKind, WorksetVisibility)
+    BuiltInCategory, BuiltInParameter, Category, CategoryType, CheckoutStatus, ElementId,
+    FailureProcessingResult, FilteredElementCollector, FilteredWorksetCollector,
+    IFailuresPreprocessor, Transaction, TransactionStatus, View, ViewType,
+    WorksetDefaultVisibilitySettings, WorksetKind, WorksetVisibility, WorksharingUtils)
+
+_NAMESPACE = 'EOM.ViewManager.Revit.N' + uuid.uuid4().hex
 
 SUPPORTED_TYPES = (
     ViewType.ThreeD, ViewType.FloorPlan, ViewType.CeilingPlan, ViewType.EngineeringPlan,
@@ -81,25 +86,77 @@ def targets(doc, view):
     return result
 
 
-def _owner(view, info, scope, allow_template):
+def _check_not_borrowed(doc, element, what):
+    """В совместной модели: элемент не должен быть занят другим пользователем."""
+    if not doc.IsWorkshared:
+        return
+    status = WorksharingUtils.GetCheckoutStatus(doc, element.Id)
+    if status == CheckoutStatus.OwnedByOtherUser:
+        owner = u''
+        try:
+            owner = WorksharingUtils.GetWorksharingTooltipInfo(doc, element.Id).Owner
+        except Exception:
+            pass
+        raise ViewManagerError(
+            u'{0} «{1}» сейчас редактирует {2}. Попросите освободить его '
+            u'(синхронизация с «Освободить все элементы») и повторите.'.format(
+                what, element.Name, owner or u'другой пользователь'))
+
+
+def _owner(doc, view, info, scope, allow_template):
     if not info['controlled']:
         return view
     if not allow_template:
         raise ViewManagerError(
             u'Шаблон «{0}» управляет {1}, а изменение шаблона запрещено в настройках '
             u'View Manager.'.format(info['name'], SCOPE_TITLES[scope]))
+    _check_not_borrowed(doc, info['template'], u'Шаблон')
     return info['template']
+
+
+class _CollectFailures(IFailuresPreprocessor):
+    """Любое предупреждение или ошибка Revit при нашем изменении — откат целиком.
+
+    Изменения видимости сами по себе предупреждений не дают; если они есть
+    (например, «нет прав на редактирование, изменения будут временными»),
+    лучше ничего не менять и показать причину в панели, чем оставить
+    модель с временными изменениями."""
+    __namespace__ = _NAMESPACE
+
+    def __init__(self):
+        self.messages = []
+
+    def PreprocessFailures(self, accessor):
+        failures = list(accessor.GetFailureMessages())
+        if not failures:
+            return FailureProcessingResult.Continue
+        for f in failures:
+            try:
+                text = f.GetDescriptionText()
+            except Exception:
+                text = u''
+            if text and text not in self.messages:
+                self.messages.append(text)
+        return FailureProcessingResult.ProceedWithRollBack
 
 
 def _run(doc, label, action):
     if doc.IsReadOnly:
         raise ViewManagerError(u'Модель открыта только для чтения.')
+    collector = _CollectFailures()
     tx = Transaction(doc, TX_PREFIX + label)
+    options = tx.GetFailureHandlingOptions()
+    options.SetFailuresPreprocessor(collector)
+    options.SetClearAfterRollback(True)
+    tx.SetFailureHandlingOptions(options)
     tx.Start()
     try:
         action()
         if tx.Commit() != TransactionStatus.Committed:
-            raise ViewManagerError(u'Revit не сохранил изменения видимости.')
+            reason = u' '.join(collector.messages[:2])
+            raise ViewManagerError(
+                u'Revit отклонил изменение, ничего не изменено.' +
+                (u' Причина: {0}'.format(reason) if reason else u''))
     except Exception:
         if tx.GetStatus() == TransactionStatus.Started:
             tx.RollBack()
@@ -132,7 +189,7 @@ def set_worksets(doc, view, names, show, allow_template, label):
     """Показать/скрыть рабочие наборы по именам. Возвращает (изменено, нет в модели)."""
     if not doc.IsWorkshared:
         raise ViewManagerError(u'В модели нет рабочих наборов.')
-    owner = _owner(view, targets(doc, view)['worksets'], 'worksets', allow_template)
+    owner = _owner(doc, view, targets(doc, view)['worksets'], 'worksets', allow_template)
     by_name = dict(user_worksets(doc))
     defaults = WorksetDefaultVisibilitySettings.GetWorksetDefaultVisibilitySettings(doc)
     target = WorksetVisibility.Visible if show else WorksetVisibility.Hidden
@@ -219,7 +276,7 @@ def set_categories(doc, view, keys_by_kind, show, allow_template, label):
     for kind, keys in keys_by_kind.items():
         if not keys:
             continue
-        owner = _owner(view, tg[kind], kind, allow_template)
+        owner = _owner(doc, view, tg[kind], kind, allow_template)
         for key in keys:
             cat = _category(doc, key)
             if cat is None or not owner.CanCategoryBeHidden(cat.Id):

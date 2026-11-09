@@ -3,6 +3,37 @@
       Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
       TextElement.Foreground="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}">
   <Grid.Resources>
+    <!-- Обычные кнопки панели: плоские, скруглённые, с подсветкой -->
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#F4F6F8"/>
+      <Setter Property="BorderBrush" Value="#C3CBD3"/>
+      <Setter Property="Foreground" Value="#263238"/>
+      <Setter Property="Padding" Value="10,3"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#E3EBF2"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#7E97AB"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#D2DEE8"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <!-- Плитка-переключатель: цвет фона задаётся из кода по состоянию -->
     <Style x:Key="Tile" TargetType="Button">
       <Setter Property="Margin" Value="2"/>
@@ -43,15 +74,15 @@
     <TabItem Header="Рабочие наборы">
       <DockPanel Margin="2">
         <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="True">
-          <Button x:Name="all_on_button" DockPanel.Dock="Left" Content="All On" Padding="8,2" Margin="0,0,4,0"/>
-          <Button x:Name="all_off_button" DockPanel.Dock="Left" Content="All Off" Padding="8,2" Margin="0,0,8,0"/>
+          <Button x:Name="all_on_button" DockPanel.Dock="Left" Content="All On" Margin="0,0,4,0"/>
+          <Button x:Name="all_off_button" DockPanel.Dock="Left" Content="All Off" Margin="0,0,8,0"/>
           <TextBox x:Name="search_box" VerticalContentAlignment="Center"
                    ToolTip="Поиск рабочего набора по имени"/>
         </DockPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel x:Name="content_panel" Margin="0,0,2,0">
             <DockPanel Margin="0,0,0,2">
-              <Button x:Name="groups_button" DockPanel.Dock="Right" Content="Группы…" Padding="6,0"
+              <Button x:Name="groups_button" DockPanel.Dock="Right" Content="Группы…"
                       ToolTip="Создать, переименовать, удалить группы и выбрать их рабочие наборы"/>
               <TextBlock Text="Группы" FontWeight="Bold" VerticalAlignment="Center"/>
             </DockPanel>
@@ -64,11 +95,11 @@
     <TabItem Header="Категории">
       <DockPanel Margin="2">
         <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="False">
-          <Button x:Name="cat_all_on_button" DockPanel.Dock="Left" Content="All On" Padding="8,2" Margin="0,0,4,0"
+          <Button x:Name="cat_all_on_button" DockPanel.Dock="Left" Content="All On" Margin="0,0,4,0"
                   ToolTip="Показать все быстрые категории"/>
-          <Button x:Name="cat_all_off_button" DockPanel.Dock="Left" Content="All Off" Padding="8,2"
+          <Button x:Name="cat_all_off_button" DockPanel.Dock="Left" Content="All Off"
                   ToolTip="Скрыть все быстрые категории"/>
-          <Button x:Name="cat_setup_button" DockPanel.Dock="Right" Content="Настроить…" Padding="8,2"
+          <Button x:Name="cat_setup_button" DockPanel.Dock="Right" Content="Настроить…"
                   ToolTip="Выбрать быстрые категории элементов и аннотаций"/>
         </DockPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -91,17 +122,26 @@
     </TabItem>
   </TabControl>
 
-  <StackPanel Grid.Row="1" Margin="8,6,8,8">
-    <StackPanel x:Name="legend_panel" Orientation="Horizontal" Margin="0,0,0,6"/>
-    <CheckBox x:Name="allow_template_box" Content="Разрешаю менять шаблон вида"
-              ToolTip="Если шаблон вида управляет рабочими наборами, изменения будут вноситься в шаблон — они коснутся всех видов с этим шаблоном."/>
-    <WrapPanel Margin="0,6,0,0">
-      <Button x:Name="save_button" Content="Сохранить профиль…" Padding="8,2" Margin="0,0,4,0"/>
-      <Button x:Name="load_button" Content="Загрузить профиль…" Padding="8,2"/>
-    </WrapPanel>
-    <TextBlock x:Name="status_label" TextWrapping="Wrap" Margin="0,6,0,0"/>
-    <Separator Margin="0,6,0,4"/>
-    <TextBlock x:Name="view_label" FontWeight="Bold" TextWrapping="Wrap"/>
-    <TextBlock x:Name="target_label" TextWrapping="Wrap" Margin="0,2,0,0"/>
-  </StackPanel>
+  <Border Grid.Row="1" BorderBrush="#D5DBE1" BorderThickness="0,1,0,0" Margin="4,6,4,0">
+    <StackPanel Margin="4,6,4,8">
+      <WrapPanel x:Name="legend_panel" Margin="0,0,0,6"/>
+      <CheckBox x:Name="allow_template_box" Margin="0,0,0,6"
+                ToolTip="Если шаблон вида управляет видимостью, изменения будут вноситься в шаблон — они коснутся всех видов с этим шаблоном.">
+        <TextBlock Text="Разрешаю менять шаблон вида" TextWrapping="Wrap"/>
+      </CheckBox>
+      <WrapPanel>
+        <Button x:Name="save_button" Content="Сохранить профиль" Margin="0,0,4,4"
+                ToolTip="Сохранить группы и быстрые категории в файл"/>
+        <Button x:Name="load_button" Content="Загрузить профиль" Margin="0,0,0,4"
+                ToolTip="Загрузить группы и быстрые категории из файла"/>
+      </WrapPanel>
+      <TextBlock x:Name="status_label" TextWrapping="Wrap" FontSize="11" Foreground="#37474F"
+                 Margin="0,2,0,0" LineHeight="15"/>
+      <Border BorderBrush="#E1E5EA" BorderThickness="0,1,0,0" Margin="0,8,0,6"/>
+      <TextBlock x:Name="view_label" FontWeight="SemiBold" FontSize="11" TextWrapping="Wrap"
+                 LineHeight="15" Foreground="#37474F"/>
+      <TextBlock x:Name="target_label" FontSize="11" TextWrapping="Wrap" LineHeight="15"
+                 Margin="0,4,0,0"/>
+    </StackPanel>
+  </Border>
 </Grid>

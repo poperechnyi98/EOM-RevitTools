@@ -20,10 +20,10 @@ clr.AddReference('PresentationCore')
 clr.AddReference('WindowsBase')
 from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxButton,
                             MessageBoxImage, MessageBoxResult, Thickness, VerticalAlignment,
-                            TextTrimming)
+                            TextTrimming, TextWrapping)
 from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, ScrollViewer,
                                      ScrollBarVisibility, StackPanel, TabItem, TextBlock, TextBox,
-                                     WrapPanel, Dock)
+                                     WrapPanel, Dock, Orientation)
 from System.Windows.Documents import LineBreak, Run
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Markup import XamlReader
@@ -100,6 +100,24 @@ def _text(value, gray=False):
     if gray:
         tb.Foreground = TEXT_GRAY
     return tb
+
+
+# Длинные имена на плитках: чем длиннее, тем мельче шрифт; самые длинные — в две строки.
+# (символов, размер шрифта, перенос на 2 строки)
+FONT_STEPS = ((20, 12.0, False), (26, 11.0, False), (34, 10.0, False))
+FONT_LONG = 9.5
+
+
+def _fit_font(label, text):
+    n = len(text)
+    for limit, size, _ in FONT_STEPS:
+        if n <= limit:
+            label.FontSize = size
+            return
+    label.FontSize = FONT_LONG
+    label.TextWrapping = TextWrapping.Wrap
+    label.LineHeight = FONT_LONG * 1.2
+    label.MaxHeight = FONT_LONG * 1.2 * 2 + 1   # не больше двух строк, дальше «…»
 
 
 def _owner_window(win, hwnd):
@@ -345,9 +363,13 @@ class Controller(object):
             swatch.Margin = Thickness(0, 0, 4, 0)
             swatch.VerticalAlignment = VerticalAlignment.Center
             label = _text(caption, gray=True)
-            label.Margin = Thickness(0, 0, 12, 0)
-            self.legend_panel.Children.Add(swatch)
-            self.legend_panel.Children.Add(label)
+            label.FontSize = 11
+            pair = StackPanel()
+            pair.Orientation = Orientation.Horizontal
+            pair.Margin = Thickness(0, 0, 10, 2)
+            pair.Children.Add(swatch)
+            pair.Children.Add(label)
+            self.legend_panel.Children.Add(pair)   # пара «цвет + подпись» не разрывается
 
     def on_ws_resize(self, sender, args):
         self._resize('ws', sender.ActualWidth)
@@ -378,6 +400,7 @@ class Controller(object):
         b.BorderBrush = border
         label = _text(text)
         label.Foreground = fg
+        _fit_font(label, text)
         b.Content = label
         b.ToolTip = tooltip
         b.Tag = tag
