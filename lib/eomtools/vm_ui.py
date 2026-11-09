@@ -12,25 +12,58 @@ except NameError:
 import copy
 import io
 import os
+import re
 
 import clr
 clr.AddReference('PresentationFramework')
 clr.AddReference('PresentationCore')
 clr.AddReference('WindowsBase')
-from System.Windows import (GridLength, GridUnitType, MessageBox, MessageBoxButton,
-                            MessageBoxImage, MessageBoxResult, Thickness, VerticalAlignment,
-                            TextTrimming)
-from System.Windows.Controls import Button, CheckBox, ColumnDefinition, Grid, TextBlock
+from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxButton, MessageBoxImage,
+                            MessageBoxResult, Thickness, VerticalAlignment, TextTrimming)
+from System.Windows.Controls import Border, Button, CheckBox, TextBlock, WrapPanel
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Markup import XamlReader
-from System.Windows.Media import Brushes
+from System.Windows.Media import Brushes, Color, SolidColorBrush
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.UI import ExternalEventRequest
 
 from eomtools import vm_profile, vm_revit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-GLYPH_ON, GLYPH_PART, GLYPH_OFF, GLYPH_NONE = u'●', u'◐', u'○', u'–'
+
+TILE_MIN_WIDTH = 125.0
+
+
+def _brush(hex_color):
+    h = hex_color.lstrip('#')
+    brush = SolidColorBrush(Color.FromRgb(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
+    brush.Freeze()
+    return brush
+
+
+# состояние -> (фон, текст, рамка)
+COLORS = {
+    'on': (_brush('#2E7D32'), Brushes.White, _brush('#1B5E20')),
+    'off': (_brush('#E3E6E9'), _brush('#455A64'), _brush('#B0BEC5')),
+    'part': (_brush('#F9A825'), _brush('#212121'), _brush('#C68400')),
+    'none': (_brush('#F5F5F5'), _brush('#9E9E9E'), _brush('#D6D6D6')),
+}
+LEGEND = (('on', u'включено'), ('off', u'выключено'), ('part', u'частично'))
+
+# Подгруппы списка рабочих наборов по префиксу «N_» в имени
+SECTION_TITLES = {u'0': u'0 — Связи', u'1': u'1 — Второстепенные', u'2': u'2 — ЭОМ'}
+OTHER_SECTION = u'Прочие'
+
+
+def section_key(name):
+    m = re.match(r'^(\d+)_', name)
+    return int(m.group(1)) if m else None
+
+
+def section_title(key):
+    if key is None:
+        return OTHER_SECTION
+    return SECTION_TITLES.get(unicode(key), u'{0}_…'.format(key))
 
 
 def _load_xaml(name):
@@ -50,6 +83,7 @@ def _id_value(eid):
 
 
 def _text(value, gray=False):
+    """Текст как TextBlock: в подписи кнопки/галочки WPF съедает первый «_»."""
     tb = TextBlock()
     tb.Text = value
     tb.VerticalAlignment = VerticalAlignment.Center
@@ -63,8 +97,8 @@ class Controller(object):
     """Логика и интерфейс панели. Заменяется целиком при обновлении кода."""
 
     NAMES = ('view_label', 'target_label', 'all_on_button', 'all_off_button', 'groups_button',
-             'groups_panel', 'search_box', 'worksets_panel', 'allow_template_box',
-             'save_button', 'load_button', 'status_label')
+             'groups_panel', 'search_box', 'worksets_panel', 'content_panel', 'legend_panel',
+             'allow_template_box', 'save_button', 'load_button', 'status_label')
 
     def __init__(self, host):
         self.host = host
@@ -72,6 +106,11 @@ class Controller(object):
         self.root = _load_xaml('vm_panel.xaml')
         for name in self.NAMES:
             setattr(self, name, self.root.FindName(name))
+        self.tile_style = self.root.FindResource('Tile')
+        self.item_width = TILE_MIN_WIDTH
+        self.wraps = []
+        self.content_panel.SizeChanged += self.on_resize
+        self.build_legend()
         self.profile = vm_profile.load()
         self.snap = None
         self.doc = None
@@ -236,67 +275,106 @@ class Controller(object):
             self.target_label.Text = (u'Изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
                                       ).format(s['template']['name'], s['template']['uses'])
 
+    # ---------- плитки ----------
+    def build_legend(self):
+        for state, caption in LEGEND:
+            bg, _, border = COLORS[state]
+            swatch = Border()
+            swatch.Width = swatch.Height = 11
+            swatch.Background = bg
+            swatch.BorderBrush = border
+            swatch.BorderThickness = Thickness(1)
+            swatch.CornerRadius = CornerRadius(2)
+            swatch.Margin = Thickness(0, 0, 4, 0)
+            swatch.VerticalAlignment = VerticalAlignment.Center
+            label = _text(caption, gray=True)
+            label.Margin = Thickness(0, 0, 12, 0)
+            self.legend_panel.Children.Add(swatch)
+            self.legend_panel.Children.Add(label)
+
+    def on_resize(self, sender, args):
+        width = self.content_panel.ActualWidth
+        if width <= 0:
+            return
+        columns = max(1, int(width // TILE_MIN_WIDTH))
+        self.item_width = width / columns
+        for wrap in self.wraps:
+            wrap.ItemWidth = self.item_width
+
+    def new_wrap(self, wrap=None):
+        if wrap is None:
+            wrap = WrapPanel()
+        wrap.ItemWidth = self.item_width
+        self.wraps.append(wrap)
+        return wrap
+
+    def tile(self, text, state, tooltip, tag, handler):
+        bg, fg, border = COLORS[state]
+        b = Button()
+        b.Style = self.tile_style
+        b.Background = bg
+        b.BorderBrush = border
+        label = _text(text)
+        label.Foreground = fg
+        b.Content = label
+        b.ToolTip = tooltip
+        b.Tag = tag
+        b.Click += handler
+        return b
+
     def render_groups(self):
         panel = self.groups_panel
         panel.Children.Clear()
+        self.wraps = [w for w in self.wraps if w is not panel]
+        self.new_wrap(panel)
         groups = self.profile['groups']
         if not groups:
+            panel.ItemWidth = float('nan')
             panel.Children.Add(_text(u'Групп пока нет — нажмите «Группы…».', gray=True))
             return
         vis = self.visibility()
         for index, group in enumerate(groups):
             states = [vis[n] for n in group['worksets'] if n in vis]
             if not states:
-                glyph = GLYPH_NONE
+                state = 'none'
             elif all(states):
-                glyph = GLYPH_ON
+                state = 'on'
             elif not any(states):
-                glyph = GLYPH_OFF
+                state = 'off'
             else:
-                glyph = GLYPH_PART
-            row = Grid()
-            row.Margin = Thickness(0, 1, 0, 1)
-            for width in (GridLength(18), GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto):
-                col = ColumnDefinition()
-                col.Width = width
-                row.ColumnDefinitions.Add(col)
-            mark = _text(glyph)
-            name = _text(u'{0} ({1})'.format(group['name'], len(group['worksets'])))
+                state = 'part'
             lines = [(n if n in vis else n + u'  — нет в модели') for n in group['worksets']]
-            name.ToolTip = u'\n'.join(lines) if lines else u'В группе нет рабочих наборов.'
-            on = self._button(u'On', index, self.on_group_on)
-            off = self._button(u'Off', index, self.on_group_off)
-            for col, ctl in enumerate((mark, name, on, off)):
-                Grid.SetColumn(ctl, col)
-                row.Children.Add(ctl)
-            panel.Children.Add(row)
-
-    def _button(self, caption, tag, handler):
-        b = Button()
-        b.Content = caption
-        b.Tag = tag
-        b.MinWidth = 38
-        b.Padding = Thickness(6, 1, 6, 1)
-        b.Margin = Thickness(4, 0, 0, 0)
-        b.Click += handler
-        return b
+            tip = u'\n'.join(lines) if lines else u'В группе нет рабочих наборов.'
+            text = u'{0}  ({1})'.format(group['name'], len(group['worksets']))
+            panel.Children.Add(self.tile(text, state, tip, (index, state), self.on_group_tile))
 
     def render_worksets(self):
         panel = self.worksets_panel
         panel.Children.Clear()
+        self.wraps = [w for w in self.wraps if w is self.groups_panel]
         if not self.snap or not self.snap['worksets']:
             return
         query = self.search_box.Text
+        sections = {}
         for item in self.snap['worksets']:
-            if not _matches(item['name'], query):
-                continue
-            cb = CheckBox()
-            cb.Content = item['name']
-            cb.IsChecked = item['visible']
-            cb.Tag = item['name']
-            cb.Margin = Thickness(0, 2, 0, 2)
-            cb.Click += self.on_workset_click
-            panel.Children.Add(cb)
+            if _matches(item['name'], query):
+                sections.setdefault(section_key(item['name']), []).append(item)
+        keys = sorted(k for k in sections if k is not None)
+        if None in sections:
+            keys.append(None)
+        for key in keys:
+            items = sections[key]
+            on = sum(1 for i in items if i['visible'])
+            header = _text(u'{0}   {1}/{2}'.format(section_title(key), on, len(items)))
+            header.FontWeight = FontWeights.Bold
+            header.Margin = Thickness(0, 4, 0, 1)
+            panel.Children.Add(header)
+            wrap = self.new_wrap()
+            for item in items:
+                state = 'on' if item['visible'] else 'off'
+                wrap.Children.Add(self.tile(item['name'], state, item['name'],
+                                            (item['name'], item['visible']), self.on_workset_tile))
+            panel.Children.Add(wrap)
 
     # ---------- обработчики ----------
     def all_names(self):
@@ -308,17 +386,20 @@ class Controller(object):
     def on_all_off(self, sender, args):
         self.request('set', self.all_names(), False, u'все рабочие наборы — Off')
 
-    def on_group_on(self, sender, args):
-        group = self.profile['groups'][sender.Tag]
-        self.request('set', group['worksets'], True, u'{0} — On'.format(group['name']))
+    def on_group_tile(self, sender, args):
+        index, state = sender.Tag
+        group = self.profile['groups'][index]
+        if state == 'none':
+            self.status(u'Рабочих наборов группы «{0}» нет в этой модели.'.format(group['name']))
+            return
+        show = state != 'on'   # частично или выключено -> включить; включено -> выключить
+        self.request('set', group['worksets'], show,
+                     u'{0} — {1}'.format(group['name'], u'On' if show else u'Off'))
 
-    def on_group_off(self, sender, args):
-        group = self.profile['groups'][sender.Tag]
-        self.request('set', group['worksets'], False, u'{0} — Off'.format(group['name']))
-
-    def on_workset_click(self, sender, args):
-        show = bool(sender.IsChecked)
-        self.request('set', [sender.Tag], show, u'{0} — {1}'.format(sender.Tag, u'On' if show else u'Off'))
+    def on_workset_tile(self, sender, args):
+        name, visible = sender.Tag
+        show = not visible
+        self.request('set', [name], show, u'{0} — {1}'.format(name, u'On' if show else u'Off'))
 
     def on_search(self, sender, args):
         self.render_worksets()
@@ -507,10 +588,9 @@ class GroupEditor(object):
             cb.IsChecked = name in chosen
             cb.Margin = Thickness(0, 2, 0, 2)
             if name in missing:
-                cb.Content = name + u'  — нет в этой модели'
-                cb.Foreground = Brushes.Gray
+                cb.Content = _text(name + u'  — нет в этой модели', gray=True)
             else:
-                cb.Content = name
+                cb.Content = _text(name)
             cb.Click += self.on_check
             panel.Children.Add(cb)
         self.update_count()

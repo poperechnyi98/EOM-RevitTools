@@ -2,47 +2,64 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
       TextElement.Foreground="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}">
+  <Grid.Resources>
+    <!-- Плитка-переключатель: цвет фона задаётся из кода по состоянию -->
+    <Style x:Key="Tile" TargetType="Button">
+      <Setter Property="Margin" Value="2"/>
+      <Setter Property="Padding" Value="6,4"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                    CornerRadius="3" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="0.82"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Opacity" Value="0.65"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Grid.Resources>
   <Grid.RowDefinitions>
-    <RowDefinition Height="Auto"/>
     <RowDefinition Height="*"/>
     <RowDefinition Height="Auto"/>
   </Grid.RowDefinitions>
 
-  <StackPanel Grid.Row="0" Margin="8,8,8,4">
-    <TextBlock x:Name="view_label" FontWeight="Bold" TextWrapping="Wrap"/>
-    <TextBlock x:Name="target_label" TextWrapping="Wrap" Margin="0,3,0,0"/>
-  </StackPanel>
-
-  <TabControl Grid.Row="1" Margin="4,0,4,0">
+  <TabControl Grid.Row="0" Margin="4,6,4,0">
     <TabItem Header="Рабочие наборы">
-      <Grid Margin="4">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-        <WrapPanel Grid.Row="0" Margin="0,2,0,6">
-          <Button x:Name="all_on_button" Content="All On" Padding="8,3" Margin="0,0,4,0"/>
-          <Button x:Name="all_off_button" Content="All Off" Padding="8,3" Margin="0,0,4,0"/>
-          <Button x:Name="groups_button" Content="Группы…" Padding="8,3"
-                  ToolTip="Создать, переименовать, удалить группы и выбрать их рабочие наборы"/>
-        </WrapPanel>
-        <TextBlock Grid.Row="1" Text="Группы" FontWeight="Bold" Margin="0,0,0,2"/>
-        <ScrollViewer Grid.Row="2" MaxHeight="260" VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="groups_panel"/>
-        </ScrollViewer>
-        <DockPanel Grid.Row="3" Margin="0,8,0,4" LastChildFill="True">
-          <TextBlock DockPanel.Dock="Top" Text="Все рабочие наборы" FontWeight="Bold" Margin="0,0,0,2"/>
-          <TextBox x:Name="search_box" ToolTip="Поиск по имени рабочего набора"/>
+      <DockPanel Margin="2">
+        <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="True">
+          <Button x:Name="all_on_button" DockPanel.Dock="Left" Content="All On" Padding="8,2" Margin="0,0,4,0"/>
+          <Button x:Name="all_off_button" DockPanel.Dock="Left" Content="All Off" Padding="8,2" Margin="0,0,8,0"/>
+          <TextBox x:Name="search_box" VerticalContentAlignment="Center"
+                   ToolTip="Поиск рабочего набора по имени"/>
         </DockPanel>
-        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="worksets_panel"/>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="content_panel" Margin="0,0,2,0">
+            <DockPanel Margin="0,0,0,2">
+              <Button x:Name="groups_button" DockPanel.Dock="Right" Content="Группы…" Padding="6,0"
+                      ToolTip="Создать, переименовать, удалить группы и выбрать их рабочие наборы"/>
+              <TextBlock Text="Группы" FontWeight="Bold" VerticalAlignment="Center"/>
+            </DockPanel>
+            <WrapPanel x:Name="groups_panel" Margin="0,0,0,8"/>
+            <StackPanel x:Name="worksets_panel"/>
+          </StackPanel>
         </ScrollViewer>
-      </Grid>
+      </DockPanel>
     </TabItem>
     <TabItem Header="Категории">
       <TextBlock Margin="8" TextWrapping="Wrap"
@@ -50,13 +67,17 @@
     </TabItem>
   </TabControl>
 
-  <StackPanel Grid.Row="2" Margin="8,6,8,8">
+  <StackPanel Grid.Row="1" Margin="8,6,8,8">
+    <StackPanel x:Name="legend_panel" Orientation="Horizontal" Margin="0,0,0,6"/>
     <CheckBox x:Name="allow_template_box" Content="Разрешаю менять шаблон вида"
               ToolTip="Если шаблон вида управляет рабочими наборами, изменения будут вноситься в шаблон — они коснутся всех видов с этим шаблоном."/>
     <WrapPanel Margin="0,6,0,0">
-      <Button x:Name="save_button" Content="Сохранить профиль…" Padding="8,3" Margin="0,0,4,0"/>
-      <Button x:Name="load_button" Content="Загрузить профиль…" Padding="8,3"/>
+      <Button x:Name="save_button" Content="Сохранить профиль…" Padding="8,2" Margin="0,0,4,0"/>
+      <Button x:Name="load_button" Content="Загрузить профиль…" Padding="8,2"/>
     </WrapPanel>
     <TextBlock x:Name="status_label" TextWrapping="Wrap" Margin="0,6,0,0"/>
+    <Separator Margin="0,6,0,4"/>
+    <TextBlock x:Name="view_label" FontWeight="Bold" TextWrapping="Wrap"/>
+    <TextBlock x:Name="target_label" TextWrapping="Wrap" Margin="0,2,0,0"/>
   </StackPanel>
 </Grid>
