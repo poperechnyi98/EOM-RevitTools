@@ -1,21 +1,57 @@
-# MyRvtTools
+# EOM-RevitTools
 
-Personal pyRevit extension maintained through Codex chats.
+Расширение pyRevit для Autodesk Revit с инструментами раздела ЭОМ. В Revit появляется вкладка **MyRvtTools**.
 
-## Location
+Требования: Revit с установленным pyRevit 5.2. Git на компьютере пользователя не нужен — pyRevit сам скачивает и обновляет расширение с GitHub.
 
-`C:\Users\poperechnyi\Documents\Codex\RevitTools\MyRvtTools.extension`
+## Кнопки
 
-pyRevit must use the parent directory `C:\Users\poperechnyi\Documents\Codex\RevitTools` as a Custom Extension Directory.
+### Оформление
+- **Размеры осей** — размерная цепочка и общий размер для выделенных осей на активном виде.
+- **Размеры лотков** — цепочки линейных размеров по наружным граням выбранных кабельных лотков и фитингов.
+- **Размеры ОКК** — цепочки линейных размеров по наружным граням коробов ОКК (воздуховоды и их соединительные детали).
+- **Тип размера** — выбор типа линейного размера, который используют «Размеры лотков» и «Размеры ОКК».
 
-## First test
+### Навигация
+- **ID элемента** — показывает и копирует ID выделенных элементов, в том числе внутри связанной модели.
+- **Зум к элементу** — приближает активный вид к выделенному элементу или к элементу по ID.
+- **Найти помещение** — поиск помещений в модели и связях по номеру или названию с приближением вида.
 
-After the extension directory is connected in pyRevit, open any non-production Revit model, select a few elements, choose **MyRvtTools → Проверка → Показать выбранное**, and inspect the pyRevit output window. The command only reads the current selection.
+### Моделирование
+- **Обход вверх** — обход препятствия на прямом лотке или воздуховоде: подъём 200 мм, участок 300 мм, переходы под 45°.
+- **Обход вниз** — то же со снижением на 200 мм.
+- **ПН_ЭОМ_Воздуховоды** — назначает тип системы воздуховодам и соединительным деталям по имени типа (весь проект или выделение).
 
-## Daily workflow
+## Установка
 
-1. Describe the required Revit operation in a Codex chat.
-2. Codex edits this extension folder directly.
-3. In Revit, use **pyRevit → Reload**.
-4. Test on a copy of the model and report the result or full error text.
-5. Once the command works, commit it to Git. Remote sharing can be added later.
+Закройте Revit и выполните в командной строке (cmd):
+
+```
+pyrevit extend ui EOM-RevitTools https://github.com/poperechnyi98/EOM-RevitTools.git --branch=main
+```
+
+Откройте Revit — должна появиться вкладка **MyRvtTools**.
+
+### Альтернатива: через интерфейс pyRevit
+
+1. **pyRevit → Settings → Custom Extension Sources** — добавьте ссылку:
+   `https://raw.githubusercontent.com/poperechnyi98/EOM-RevitTools/main/extensions.json`
+2. Сохраните настройки, откройте **pyRevit → Extensions**, найдите **EOM-RevitTools** и нажмите **Install**.
+3. Перезапустите Revit (или **pyRevit → Reload**).
+
+## Обновление
+
+**pyRevit → Update** — pyRevit подтянет последнюю версию из ветки `main`.
+
+## Удаление
+
+Закройте Revit и выполните:
+
+```
+pyrevit extensions delete EOM-RevitTools
+```
+
+## Важно
+
+- Если раньше расширение было подключено как локальная папка (Custom Extension Directory), уберите её в настройках pyRevit, иначе вкладка появится дважды.
+- Команды, которые изменяют модель, проверяйте на копии проекта.

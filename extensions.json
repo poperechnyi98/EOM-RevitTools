@@ -1,0 +1,18 @@
+{
+  "extensions": [
+    {
+      "builtin": "False",
+      "default_enabled": "True",
+      "type": "extension",
+      "rocket_mode_compatible": "False",
+      "name": "EOM-RevitTools",
+      "description": "Инструменты ЭОМ для Revit: оформление, навигация, моделирование (вкладка MyRvtTools)",
+      "author": "Алексей Поперечный",
+      "author_profile": "https://github.com/poperechnyi98",
+      "url": "https://github.com/poperechnyi98/EOM-RevitTools.git",
+      "website": "https://github.com/poperechnyi98/EOM-RevitTools",
+      "image": "",
+      "dependencies": []
+    }
+  ]
+}
