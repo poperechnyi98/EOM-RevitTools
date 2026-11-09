@@ -359,10 +359,18 @@ class Controller(object):
         s = self.snap
         inlines = self.target_label.Inlines
         inlines.Clear()
+        info = self.view_label.Inlines
+        info.Clear()
         if s is None:
-            self.view_label.Text = u'Откройте модель Revit.'
+            self._field(u'Модель', u'не открыта')
             return
-        self.view_label.Text = u'{0} — {1}'.format(s['doc_title'], s['view_name'])
+        self._field(u'Модель', s['doc_title'])
+        self._field(u'Вид', s['view_name'])
+        t = (s['targets'] or {}).get('worksets') if s['supported'] else None
+        if t and t['has_template']:
+            self._field(u'Шаблон', u'{0} (видов: {1})'.format(t['name'], t['uses']))
+        elif s['supported']:
+            self._field(u'Шаблон', u'нет')
         if not s['supported']:
             self._line(u'Откройте план, разрез, фасад или 3D-вид проекта.', TEXT_GRAY)
             return
@@ -372,6 +380,18 @@ class Controller(object):
             return
         text, brush = self.target_text(scopes)
         self._line(text, brush)
+
+    def _field(self, caption, value):
+        """Строка «Подпись: значение» в блоке информации внизу панели."""
+        info = self.view_label.Inlines
+        if info.Count:
+            info.Add(LineBreak())
+        label = Run(caption + u': ')
+        label.Foreground = TEXT_GRAY
+        info.Add(label)
+        text = Run(value)
+        text.FontWeight = FontWeights.SemiBold
+        info.Add(text)
 
     def _line(self, text, brush):
         inlines = self.target_label.Inlines
@@ -389,13 +409,11 @@ class Controller(object):
             return u'Изменения вносятся в вид.', TEXT_GRAY
         controlled = [i for i in infos if i['controlled']]
         if not controlled:
-            return (u'Шаблон «{0}» этим не управляет — изменения вносятся в вид.'
-                    .format(first['name'])), TEXT_GRAY
+            return u'Шаблон этим не управляет — изменения вносятся в вид.', TEXT_GRAY
         if any(self.snap['blocked'][s] for s in scopes):
-            return (u'Шаблон «{0}». Чтобы менять, поставьте галочку «Разрешаю менять шаблон вида».'
-                    .format(first['name'])), TEXT_RED
-        return (u'Изменения вносятся в шаблон «{0}» (видов с ним: {1}).'
-                .format(first['name'], controlled[0]['uses'])), TEXT_ORANGE
+            return (u'Шаблон управляет этим. Чтобы менять, поставьте галочку '
+                    u'«Разрешаю менять шаблон вида».'), TEXT_RED
+        return u'Изменения вносятся в шаблон — коснутся всех его видов.', TEXT_ORANGE
 
     # ---------- плитки ----------
     def build_legend(self):

@@ -71,18 +71,15 @@ def targets(doc, view):
     if template is None:
         return result
     free = set(_id_value(x) for x in template.GetNonControlledTemplateParameterIds())
-    uses = None
+    tval = _id_value(tid)
+    uses = sum(1 for v in FilteredElementCollector(doc).OfClass(View)
+               if not v.IsTemplate and _id_value(v.ViewTemplateId) == tval)
     for scope, param in SCOPES.items():
         info = result[scope]
         info['template'] = template
         info['name'] = template.Name
         info['controlled'] = _id_value(ElementId(param)) not in free
-        if info['controlled']:
-            if uses is None:
-                tval = _id_value(tid)
-                uses = sum(1 for v in FilteredElementCollector(doc).OfClass(View)
-                           if not v.IsTemplate and _id_value(v.ViewTemplateId) == tval)
-            info['uses'] = uses
+        info['uses'] = uses
     return result
 
 
