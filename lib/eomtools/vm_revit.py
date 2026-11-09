@@ -38,9 +38,10 @@ SCOPES = {
     'worksets': BuiltInParameter.VIS_GRAPHICS_WORKSETS,
     'model': BuiltInParameter.VIS_GRAPHICS_MODEL,
     'annotation': BuiltInParameter.VIS_GRAPHICS_ANNOTATION,
+    'filters': BuiltInParameter.VIS_GRAPHICS_FILTERS,
 }
 SCOPE_TITLES = {'worksets': u'рабочими наборами', 'model': u'модельными категориями',
-                'annotation': u'категориями аннотаций'}
+                'annotation': u'категориями аннотаций', 'filters': u'фильтрами'}
 CATEGORY_TYPES = {'model': CategoryType.Model, 'annotation': CategoryType.Annotation}
 
 

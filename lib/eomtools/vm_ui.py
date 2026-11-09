@@ -23,6 +23,7 @@ from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxBut
                             TextTrimming, TextWrapping)
 from System.Windows import GridLength, GridUnitType, HorizontalAlignment
 from System.Windows.Controls import ColumnDefinition, Grid
+from System.Windows.Controls import Slider
 from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, ScrollViewer,
                                      ScrollBarVisibility, StackPanel, TabItem, TextBlock, TextBox,
                                      WrapPanel, Dock, Orientation)
@@ -33,7 +34,7 @@ from System.Windows.Media import Brushes, Color, SolidColorBrush
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.UI import ExternalEventRequest
 
-from eomtools import vm_profile, vm_revit
+from eomtools import vm_colors, vm_profile, vm_revit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -184,7 +185,10 @@ class Controller(object):
              'worksets_panel', 'content_panel',
              # категории
              'cat_all_on_button', 'cat_all_off_button', 'cat_setup_button', 'cat_content_panel',
-             'model_header', 'model_panel', 'annotation_header', 'annotation_panel')
+             'model_header', 'model_panel', 'annotation_header', 'annotation_panel',
+             # цвета
+             'colors_apply_button', 'colors_clear_button', 'colors_setup_button',
+             'colors_state_label', 'colors_panel')
 
     def __init__(self, host):
         self.host = host
@@ -215,6 +219,11 @@ class Controller(object):
         self.cat_all_on_button.Click += self.on_cat_all_on
         self.cat_all_off_button.Click += self.on_cat_all_off
         self.cat_setup_button.Click += self.on_cat_setup
+        self.colors_apply_button.Click += self.on_colors_apply
+        self.colors_clear_button.Click += self.on_colors_clear
+        self.colors_setup_button.Click += self.on_colors_setup
+        self.color_info = None
+        self.colors_applied = None
         self.allow_template_box.Click += self.on_allow_template
         self.save_button.Click += self.on_save_profile
         self.load_button.Click += self.on_load_profile
@@ -249,6 +258,14 @@ class Controller(object):
             self.doc = uidoc.Document
             self.view_id = view.Id if view is not None else None
             self.snap = vm_revit.snapshot(self.doc, view, self.profile)
+            self.color_info, self.colors_applied = None, None
+            if not self.doc.IsFamilyDocument:
+                try:
+                    self.color_info = vm_colors.scan(self.doc)
+                    if self.snap['supported']:
+                        self.colors_applied = vm_colors.applied_count(self.doc, view)
+                except Exception:
+                    pass
         self.render()
 
     # ---------- запросы к Revit ----------
@@ -285,6 +302,19 @@ class Controller(object):
                 self.status(u'Вид изменился. Повторите действие на нужном виде.')
                 return
             allow = self.profile['allow_template']
+            if kind == 'colors_apply':
+                applied, removed = vm_colors.apply(doc, uidoc.ActiveView, self.profile['colors'],
+                                                   allow, u'цвета по рабочим наборам')
+                self.refresh(uiapp)
+                self.status(u'Цвета применены: фильтров {0}.'.format(applied) +
+                            (u' Снято лишних: {0}.'.format(removed) if removed else u''))
+                return
+            if kind == 'colors_clear':
+                removed = vm_colors.clear(doc, uidoc.ActiveView, allow, u'снять цвета по РБ')
+                self.refresh(uiapp)
+                self.status(u'Снято фильтров: {0}.'.format(removed) if removed
+                            else u'Фильтров 3_ВСЕ_РБ_ на виде нет.')
+                return
             if kind == 'worksets':
                 changed, missing = vm_revit.set_worksets(
                     doc, uidoc.ActiveView, p['names'], p['show'], allow, p['label'])
@@ -339,8 +369,11 @@ class Controller(object):
         any_cat = self.can_edit('model') or self.can_edit('annotation')
         self.cat_all_on_button.IsEnabled = any_cat
         self.cat_all_off_button.IsEnabled = any_cat
-        for ctl in (self.groups_button, self.cat_setup_button, self.allow_template_box,
-                    self.save_button, self.load_button):
+        colors_ok = self.can_edit('filters')
+        self.colors_apply_button.IsEnabled = colors_ok
+        self.colors_clear_button.IsEnabled = colors_ok
+        for ctl in (self.groups_button, self.cat_setup_button, self.colors_setup_button,
+                    self.allow_template_box, self.save_button, self.load_button):
             ctl.IsEnabled = not self.busy
 
     # ---------- отрисовка ----------
@@ -348,11 +381,14 @@ class Controller(object):
         self.render_header()
         self.render_ws_area()
         self.render_categories()
+        self.render_colors()
         self.update_enabled()
 
     def current_scopes(self):
         if self.tabs.SelectedIndex == 1:
             return ('model', 'annotation')
+        if self.tabs.SelectedIndex == 2:
+            return ('filters',)
         return ('worksets',)
 
     def render_header(self):
@@ -651,6 +687,80 @@ class Controller(object):
         self.status(u'Быстрые категории сохранены.')
         self.request('refresh')
 
+    # ---------- вкладка «Цвета» ----------
+    def render_colors(self):
+        panel = self.colors_panel
+        panel.Children.Clear()
+        colors = self.profile['colors']
+        enabled = [i for i in colors['items'] if i['enabled']]
+        info = self.color_info
+        own = set(info['own']) if info else set()
+        linked = set()
+        if info:
+            for link in info['links']:
+                linked.update(link['worksets'])
+        applied = self.colors_applied
+        state = u'В схеме РБ: {0}.'.format(len(enabled))
+        if applied is not None:
+            state += u' На виде фильтров 3_ВСЕ_РБ_: {0}.'.format(applied)
+        state += u' Изменения схемы попадают на вид после «Применить».'
+        self.colors_state_label.Text = state
+        if not enabled:
+            panel.Children.Add(_text(u'Схема пуста — нажмите ⚙ и выберите цвета рабочих наборов.',
+                                     gray=True))
+            return
+        for scope, title, present in (('own', u'Наша модель', own), ('link', u'В связях', linked)):
+            rows = [i for i in enabled if i['scope'] == scope]
+            if not rows:
+                continue
+            header = _text(title)
+            header.FontWeight = FontWeights.Bold
+            header.Margin = Thickness(0, 4, 0, 2)
+            panel.Children.Add(header)
+            for it in rows:
+                line = StackPanel()
+                line.Orientation = Orientation.Horizontal
+                line.Margin = Thickness(0, 1, 0, 1)
+                sw = Border()
+                sw.Width = sw.Height = 14
+                sw.CornerRadius = CornerRadius(2)
+                sw.BorderBrush = Brushes.Gray
+                sw.BorderThickness = Thickness(1)
+                sw.Background = SolidColorBrush(Color.FromRgb(*it['color']))
+                sw.Margin = Thickness(0, 0, 6, 0)
+                line.Children.Add(sw)
+                text = it['name']
+                if it['transparency']:
+                    text += u'   · прозр. {0} %'.format(it['transparency'])
+                label = _text(text, gray=bool(info) and it['name'] not in present)
+                if info and it['name'] not in present:
+                    label.Text += u'   (нет в этой модели)'
+                line.Children.Add(label)
+                panel.Children.Add(line)
+
+    def on_colors_setup(self, sender, args):
+        info = self.color_info
+        if not info or (not info['own'] and not info['links']):
+            self.status(u'Откройте модель с рабочими наборами или связями.')
+            return
+        editor = ColorEditor(info, self.profile['colors'], self.uiapp.MainWindowHandle)
+        result = editor.show()
+        if result is None:
+            return
+        self.profile['colors'] = result
+        self.save_profile()
+        self.render_colors()
+        self.status(u'Схема цветов сохранена. Нажмите «Применить», чтобы перенести её на вид.')
+
+    def on_colors_apply(self, sender, args):
+        if not any(i['enabled'] for i in self.profile['colors']['items']):
+            self.status(u'Схема пуста — сначала настройте цвета (⚙).')
+            return
+        self.request('colors_apply')
+
+    def on_colors_clear(self, sender, args):
+        self.request('colors_clear')
+
     # ---------- общее ----------
     def on_tab(self, sender, args):
         if sender.Equals(args.OriginalSource):
@@ -808,6 +918,191 @@ class CategoryEditor(object):
             order = dict((k, i) for i, (k, _) in enumerate(self.catalog[kind]))
             self.chosen[kind].sort(key=lambda k: (order.get(k, len(order)), k))
         self.result = self.chosen
+        self.win.DialogResult = True
+
+
+PALETTE = ((231, 76, 60), (52, 152, 219), (46, 204, 113), (243, 156, 18), (155, 89, 182),
+           (26, 188, 156), (233, 30, 99), (121, 85, 72), (0, 150, 136), (63, 81, 181),
+           (205, 220, 57), (255, 87, 34))
+
+
+class ColorEditor(object):
+    """Окно «Цвета по рабочим наборам»: модели слева, РБ выбранной модели справа."""
+
+    NAMES = ('sources_list', 'source_title', 'source_hint', 'search_box', 'all_on_button',
+             'all_off_button', 'rows_panel', 'param_box', 'ok_button')
+
+    def __init__(self, info, colors, owner_hwnd):
+        self.win = _load_xaml('vm_colors.xaml')
+        for name in self.NAMES:
+            setattr(self, name, self.win.FindName(name))
+        _owner_window(self.win, owner_hwnd)
+        self.info = info
+        self.shared = vm_colors.shared_names(info)
+        self.items = dict(((it['scope'], it['name']), copy.deepcopy(it)) for it in colors['items'])
+        self.original = set(self.items.keys())
+        self.param_box.Text = colors['param']
+        self.result = None
+        self.sources = [(u'Эта модель', 'own', info['own'])]
+        for link in info['links']:
+            self.sources.append((link['title'], 'link', link['worksets']))
+        for title, scope, names in self.sources:
+            on = sum(1 for n in names if self.items.get((scope, n), {}).get('enabled'))
+            self.sources_list.Items.Add(u'{0}   ({1}/{2})'.format(title, on, len(names)))
+        self.sources_list.SelectionChanged += self.on_source
+        self.search_box.TextChanged += self.on_search
+        self.all_on_button.Click += self._bulk(True)
+        self.all_off_button.Click += self._bulk(False)
+        self.ok_button.Click += self.on_ok
+        self.sources_list.SelectedIndex = 0 if self.sources else -1
+
+    def show(self):
+        self.win.ShowDialog()
+        return self.result
+
+    def current(self):
+        i = self.sources_list.SelectedIndex
+        return self.sources[i] if i >= 0 else None
+
+    def item(self, scope, name, create=False):
+        key = (scope, name)
+        if key not in self.items and create:
+            color = PALETTE[len(self.items) % len(PALETTE)]
+            self.items[key] = {'name': name, 'scope': scope, 'enabled': False,
+                               'color': list(color), 'transparency': 0}
+        return self.items.get(key)
+
+    def update_source_counts(self):
+        index = self.sources_list.SelectedIndex
+        for i, (title, scope, names) in enumerate(self.sources):
+            on = sum(1 for n in names if (self.items.get((scope, n)) or {}).get('enabled'))
+            text = u'{0}   ({1}/{2})'.format(title, on, len(names))
+            if self.sources_list.Items[i] != text:
+                self.sources_list.SelectionChanged -= self.on_source
+                self.sources_list.Items.RemoveAt(i)
+                self.sources_list.Items.Insert(i, text)
+                self.sources_list.SelectionChanged += self.on_source
+        self.sources_list.SelectedIndex = index
+
+    def on_source(self, sender, args):
+        self.render()
+
+    def on_search(self, sender, args):
+        self.render()
+
+    def render(self):
+        self.rows_panel.Children.Clear()
+        src = self.current()
+        if src is None:
+            return
+        title, scope, names = src
+        self.source_title.Text = title
+        if scope == 'own':
+            self.source_hint.Text = u'Рабочие наборы нашей модели.'
+        else:
+            self.source_hint.Text = (u'Рабочие наборы внутри связи. Цвет РБ общий для всех связей, '
+                                     u'где есть РБ с таким именем.')
+        if not names:
+            self.rows_panel.Children.Add(_text(u'В модели нет рабочих наборов.', gray=True))
+            return
+        for name in names:
+            if _matches(name, self.search_box.Text):
+                self.rows_panel.Children.Add(self.row(scope, name))
+
+    def row(self, scope, name):
+        it = self.item(scope, name, create=True)
+        grid = Grid()
+        grid.Margin = Thickness(0, 2, 0, 2)
+        for width in (GridLength(1, GridUnitType.Star), GridLength(44), GridLength(130),
+                      GridLength(40)):
+            col = ColumnDefinition()
+            col.Width = width
+            grid.ColumnDefinitions.Add(col)
+        cb = CheckBox()
+        cb.VerticalAlignment = VerticalAlignment.Center
+        label = StackPanel()
+        label.Children.Add(_text(name))
+        if name in self.shared:
+            hint = _text(u'есть и у нас, и в связях — различается по «{0}»'.format(
+                self.param_box.Text), gray=True)
+            hint.FontSize = 10.5
+            hint.Foreground = TEXT_ORANGE
+            label.Children.Add(hint)
+        cb.Content = label
+        cb.IsChecked = it['enabled']
+        cb.Click += self._toggle(it)
+        swatch = Button()
+        swatch.Width = 34
+        swatch.Height = 20
+        swatch.ToolTip = u'Выбрать цвет'
+        swatch.Background = SolidColorBrush(Color.FromRgb(*it['color']))
+        swatch.Click += self._pick(it, swatch)
+        slider = Slider()
+        slider.Minimum = 0
+        slider.Maximum = 100
+        slider.TickFrequency = 5
+        slider.IsSnapToTickEnabled = True
+        slider.Value = it['transparency']
+        slider.VerticalAlignment = VerticalAlignment.Center
+        value = _text(u'{0} %'.format(it['transparency']))
+        value.Margin = Thickness(6, 0, 0, 0)
+        slider.ValueChanged += self._slide(it, value)
+        for col, ctl in enumerate((cb, swatch, slider, value)):
+            Grid.SetColumn(ctl, col)
+            grid.Children.Add(ctl)
+        return grid
+
+    def _toggle(self, it):
+        def handler(sender, args):
+            it['enabled'] = bool(sender.IsChecked)
+            self.update_source_counts()
+        return handler
+
+    def _pick(self, it, swatch):
+        def handler(sender, args):
+            import clr as _clr
+            _clr.AddReference('System.Windows.Forms')
+            _clr.AddReference('System.Drawing')
+            from System.Windows.Forms import ColorDialog, DialogResult
+            from System.Drawing import Color as DColor
+            dlg = ColorDialog()
+            dlg.FullOpen = True
+            dlg.Color = DColor.FromArgb(*it['color'])
+            if dlg.ShowDialog() == DialogResult.OK:
+                it['color'] = [int(dlg.Color.R), int(dlg.Color.G), int(dlg.Color.B)]
+                swatch.Background = SolidColorBrush(Color.FromRgb(*it['color']))
+                if not it['enabled']:
+                    it['enabled'] = True
+                    self.render()
+                    self.update_source_counts()
+        return handler
+
+    def _slide(self, it, label):
+        def handler(sender, args):
+            it['transparency'] = int(round(sender.Value))
+            label.Text = u'{0} %'.format(it['transparency'])
+        return handler
+
+    def _bulk(self, on):
+        def handler(sender, args):
+            src = self.current()
+            if src is None:
+                return
+            _, scope, names = src
+            for name in names:
+                if _matches(name, self.search_box.Text):
+                    self.item(scope, name, create=True)['enabled'] = on
+            self.render()
+            self.update_source_counts()
+        return handler
+
+    def on_ok(self, sender, args):
+        param = (self.param_box.Text or u'').strip() or u'SMNX_Фильтр'
+        items = sorted(self.items.values(), key=lambda i: (i['scope'] != 'own', i['name'].lower()))
+        # храним включённые и те, что уже были в профиле (цвет не теряется при выключении);
+        # строки, которые лишь показались в окне, не сохраняем
+        keep = [i for i in items if i['enabled'] or (i['scope'], i['name']) in self.original]
+        self.result = {'param': param, 'items': keep}
         self.win.DialogResult = True
 
 

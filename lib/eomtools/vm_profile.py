@@ -24,7 +24,35 @@ def default():
     return {'version': VERSION, 'allow_template': False, 'groups': [],
             'categories': {'model': [], 'annotation': []},
             # как сокращать имена рабочих наборов на плитках (только показ)
-            'workset_names': {'rules': []}}
+            'workset_names': {'rules': []},
+            # вкладка «Цвета»: окраска по рабочим наборам (в т.ч. внутри связей).
+            # items: {'name', 'scope': 'own'|'link', 'enabled', 'color': [r,g,b], 'transparency'}
+            # param — параметр, которым различаются одинаковые РБ у нас и в связях
+            'colors': {'param': u'SMNX_Фильтр', 'items': []}}
+
+
+def _color(value):
+    try:
+        r, g, b = [max(0, min(255, int(x))) for x in value]
+        return [r, g, b]
+    except Exception:
+        return [128, 128, 128]
+
+
+def _color_items(values):
+    out, seen = [], set()
+    for it in values or []:
+        if not isinstance(it, dict) or not it.get('name'):
+            continue
+        scope = it.get('scope') if it.get('scope') in ('own', 'link') else 'link'
+        key = (scope, unicode(it['name']))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({'name': key[1], 'scope': scope, 'enabled': bool(it.get('enabled', True)),
+                    'color': _color(it.get('color')),
+                    'transparency': max(0, min(100, int(it.get('transparency') or 0)))})
+    return out
 
 
 def _rules(values):
@@ -68,6 +96,10 @@ def normalize(data):
     naming = data.get('workset_names')
     if isinstance(naming, dict):
         result['workset_names'] = {'rules': _rules(naming.get('rules'))}
+    colors = data.get('colors')
+    if isinstance(colors, dict):
+        result['colors'] = {'param': unicode(colors.get('param') or u'SMNX_Фильтр'),
+                            'items': _color_items(colors.get('items'))}
     return result
 
 

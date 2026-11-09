@@ -124,6 +124,25 @@
         </ScrollViewer>
       </DockPanel>
     </TabItem>
+    <TabItem Header="Цвета">
+      <DockPanel Margin="2">
+        <DockPanel DockPanel.Dock="Top" Margin="0,2,0,6" LastChildFill="False">
+          <Button x:Name="colors_apply_button" DockPanel.Dock="Left" Content="Применить" Margin="0,0,4,0"
+                  ToolTip="Создать/обновить фильтры 3_ВСЕ_РБ_… по схеме и применить к виду (или шаблону)"/>
+          <Button x:Name="colors_clear_button" DockPanel.Dock="Left" Content="Снять"
+                  ToolTip="Убрать с вида (или шаблона) все фильтры 3_ВСЕ_РБ_…"/>
+          <Button x:Name="colors_setup_button" DockPanel.Dock="Right" Padding="6,2"
+                  ToolTip="Настройка: цвета и прозрачность по рабочим наборам">
+            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="14"/>
+          </Button>
+        </DockPanel>
+        <TextBlock x:Name="colors_state_label" DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray"
+                   FontSize="11" Margin="0,0,0,6"/>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="colors_panel" Margin="0,0,2,0"/>
+        </ScrollViewer>
+      </DockPanel>
+    </TabItem>
   </TabControl>
 
   <Border Grid.Row="1" BorderBrush="#D5DBE1" BorderThickness="0,1,0,0" Margin="4,6,4,0">
