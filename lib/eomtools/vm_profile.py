@@ -22,7 +22,17 @@ VERSION = 1
 
 def default():
     return {'version': VERSION, 'allow_template': False, 'groups': [],
-            'categories': {'model': [], 'annotation': []}}
+            'categories': {'model': [], 'annotation': []},
+            # как сокращать имена рабочих наборов на плитках (только показ)
+            'workset_names': {'strip_prefix': True, 'rules': []}}
+
+
+def _rules(values):
+    out = []
+    for r in values or []:
+        if isinstance(r, dict) and r.get('find'):
+            out.append({'find': unicode(r['find']), 'replace': unicode(r.get('replace') or u'')})
+    return out
 
 
 def path():
@@ -55,7 +65,23 @@ def normalize(data):
     if isinstance(cats, dict):
         result['categories']['model'] = _names(cats.get('model'))
         result['categories']['annotation'] = _names(cats.get('annotation'))
+    naming = data.get('workset_names')
+    if isinstance(naming, dict):
+        result['workset_names'] = {'strip_prefix': bool(naming.get('strip_prefix', True)),
+                                   'rules': _rules(naming.get('rules'))}
     return result
+
+
+def short_workset_name(name, naming):
+    """Имя рабочего набора для плитки по правилам «Наименование РБ»."""
+    import re
+    text = name
+    if naming.get('strip_prefix'):
+        text = re.sub(r'^\d+_', u'', text)
+    for rule in naming.get('rules', []):
+        text = text.replace(rule['find'], rule['replace'])
+    text = u' '.join(text.split())
+    return text or name
 
 
 def read_file(file_path):

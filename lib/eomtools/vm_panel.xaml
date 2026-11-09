@@ -82,8 +82,10 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel x:Name="content_panel" Margin="0,0,2,0">
             <DockPanel Margin="0,0,0,2">
-              <Button x:Name="groups_button" DockPanel.Dock="Right" Content="Группы…"
-                      ToolTip="Создать, переименовать, удалить группы и выбрать их рабочие наборы"/>
+              <Button x:Name="groups_button" DockPanel.Dock="Right" Padding="6,2"
+                      ToolTip="Настройка: группы и наименование рабочих наборов">
+                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="14"/>
+              </Button>
               <TextBlock Text="Группы" FontWeight="Bold" VerticalAlignment="Center"/>
             </DockPanel>
             <WrapPanel x:Name="groups_panel" Margin="0,0,0,8"/>
@@ -99,8 +101,10 @@
                   ToolTip="Показать все быстрые категории"/>
           <Button x:Name="cat_all_off_button" DockPanel.Dock="Left" Content="All Off"
                   ToolTip="Скрыть все быстрые категории"/>
-          <Button x:Name="cat_setup_button" DockPanel.Dock="Right" Content="Настроить…"
-                  ToolTip="Выбрать быстрые категории элементов и аннотаций"/>
+          <Button x:Name="cat_setup_button" DockPanel.Dock="Right" Padding="6,2"
+                  ToolTip="Настройка: быстрые категории элементов и аннотаций">
+            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="14"/>
+          </Button>
         </DockPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel x:Name="cat_content_panel" Margin="0,0,2,0">

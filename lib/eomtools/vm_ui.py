@@ -21,6 +21,8 @@ clr.AddReference('WindowsBase')
 from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxButton,
                             MessageBoxImage, MessageBoxResult, Thickness, VerticalAlignment,
                             TextTrimming, TextWrapping)
+from System.Windows import GridLength, GridUnitType, HorizontalAlignment
+from System.Windows.Controls import ColumnDefinition, Grid
 from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, ScrollViewer,
                                      ScrollBarVisibility, StackPanel, TabItem, TextBlock, TextBox,
                                      WrapPanel, Dock, Orientation)
@@ -62,6 +64,51 @@ TEXT_ORANGE = Brushes.DarkOrange
 # Подгруппы списка рабочих наборов по префиксу «N_» в имени
 SECTION_TITLES = {u'0': u'0 — Связи', u'1': u'1 — Второстепенные', u'2': u'2 — ЭОМ'}
 OTHER_SECTION = u'Прочие'
+
+
+# Сокращения названий категорий на плитках (полное имя — в подсказке).
+# Порядок важен: сначала длинные сочетания, потом отдельные слова.
+CATEGORY_ABBR = (
+    (u'Соединительные детали', u'Соед. дет.'),
+    (u'соединительные детали', u'соед. дет.'),
+    (u'Соединительная деталь', u'Соед. дет.'),
+    (u'Осветительные приборы', u'Освет. приборы'),
+    (u'Электрооборудование', u'Электрообор.'),
+    (u'Электрические приборы', u'Эл. приборы'),
+    (u'Электрические цепи', u'Эл. цепи'),
+    (u'Механическое оборудование', u'Мех. оборуд.'),
+    (u'Оборудование', u'Оборуд.'),
+    (u'оборудования', u'оборуд.'),
+    (u'Арматура', u'Арм.'),
+    (u'арматуры', u'арм.'),
+    (u'Пожарная сигнализация', u'Пож. сигнализация'),
+    (u'Устройства связи', u'Устр. связи'),
+    (u'Предохранительные устройства', u'Предохр. устр.'),
+    (u'Обобщенные модели', u'Обобщ. модели'),
+    (u'Обобщённые модели', u'Обобщ. модели'),
+    (u'Кабельные лотки', u'Каб. лотки'),
+    (u'кабельных лотков', u'каб. лотков'),
+    (u'кабельного лотка', u'каб. лотка'),
+    (u'воздуховодов', u'возд.'),
+    (u'воздуховода', u'возд.'),
+    (u'трубопроводов', u'труб.'),
+    (u'трубопровода', u'труб.'),
+    (u'Воздухораспределители', u'Воздухораспр.'),
+    (u'по осевой', u'(ось)'),
+    (u'изоляции', u'изол.'),
+    (u'Изоляция', u'Изол.'),
+    (u'Несущие колонны', u'Нес. колонны'),
+    (u'Каркас несущий', u'Карк. несущ.'),
+    (u'Обозначения', u'Обозн.'),
+    (u'Границы 3D вида', u'Границы 3D'),
+)
+
+
+def short_category_name(name):
+    text = name
+    for long_, short in CATEGORY_ABBR:
+        text = text.replace(long_, short)
+    return u' '.join(text.split())
 
 
 def section_key(name):
@@ -424,7 +471,7 @@ class Controller(object):
         groups = self.profile['groups']
         if not groups:
             panel.ItemWidth = float('nan')
-            panel.Children.Add(_text(u'Групп пока нет — нажмите «Группы…».', gray=True))
+            panel.Children.Add(_text(u'Групп пока нет — нажмите ⚙ справа.', gray=True))
             return
         self.new_wrap('ws', panel)
         vis = self.visibility()
@@ -464,9 +511,11 @@ class Controller(object):
             header.Margin = Thickness(0, 4, 0, 1)
             panel.Children.Add(header)
             wrap = self.new_wrap('ws')
+            naming = self.profile['workset_names']
             for item in items:
                 state = 'on' if item['visible'] else 'off'
-                wrap.Children.Add(self.tile(item['name'], state, item['name'],
+                short = vm_profile.short_workset_name(item['name'], naming)
+                wrap.Children.Add(self.tile(short, state, item['name'],
                                             (item['name'], item['visible']), self.on_workset_tile))
             panel.Children.Add(wrap)
 
@@ -502,15 +551,16 @@ class Controller(object):
         self.update_enabled()
 
     def on_edit_groups(self, sender, args):
-        editor = GroupEditor(self.all_names(), self.profile['groups'], self.uiapp.MainWindowHandle)
+        editor = GroupEditor(self.all_names(), self.profile['groups'],
+                             self.profile['workset_names'], self.uiapp.MainWindowHandle)
         result = editor.show()
         if result is None:
             return
-        self.profile['groups'] = result
+        self.profile['groups'], self.profile['workset_names'] = result
         self.save_profile()
         self.render_ws_area()
         self.update_enabled()
-        self.status(u'Группы сохранены.')
+        self.status(u'Настройки рабочих наборов сохранены.')
 
     # ---------- вкладка «Категории» ----------
     def render_categories(self):
@@ -525,7 +575,7 @@ class Controller(object):
             header.Text = u'{0}   {1}/{2}'.format(KIND_TITLES[kind], on, len(keys))
             if not keys:
                 panel.ItemWidth = float('nan')
-                panel.Children.Add(_text(u'Не выбрано — нажмите «Настроить…».', gray=True))
+                panel.Children.Add(_text(u'Не выбрано — нажмите ⚙ вверху справа.', gray=True))
                 continue
             self.new_wrap('cat', panel)
             if not items:   # нет модели / неподходящий вид — показываем по профилю
@@ -539,7 +589,7 @@ class Controller(object):
                     state, tip = 'none', u'{0}\nКатегорию нельзя скрыть на этом виде.'.format(item['name'])
                 else:
                     state, tip = ('on' if item['visible'] else 'off'), item['name']
-                panel.Children.Add(self.tile(item['name'], state, tip,
+                panel.Children.Add(self.tile(short_category_name(item['name']), state, tip,
                                              (kind, item['key'], item['visible'], state, item['name']),
                                              self.on_category_tile))
 
@@ -748,18 +798,24 @@ class GroupEditor(object):
 
     NAMES = ('groups_list', 'add_button', 'delete_button', 'up_button', 'down_button',
              'name_box', 'count_label', 'search_box', 'check_shown_button',
-             'uncheck_shown_button', 'worksets_panel', 'ok_button')
+             'uncheck_shown_button', 'worksets_panel', 'ok_button',
+             'strip_prefix_box', 'rules_panel', 'preview_panel', 'add_rule_button')
 
-    def __init__(self, model_names, groups, owner_hwnd):
+    def __init__(self, model_names, groups, naming, owner_hwnd):
         self.win = _load_xaml('vm_groups.xaml')
         for name in self.NAMES:
             setattr(self, name, self.win.FindName(name))
         _owner_window(self.win, owner_hwnd)
         self.model_names = list(model_names)
         self.groups = copy.deepcopy(groups)
+        self.naming = copy.deepcopy(naming)
         self.current = None
         self.loading = False
         self.result = None
+        self.strip_prefix_box.IsChecked = self.naming['strip_prefix']
+        self.strip_prefix_box.Click += self.on_strip_prefix
+        self.add_rule_button.Click += self.on_add_rule
+        self.render_rules()
         self.groups_list.SelectionChanged += self.on_select
         self.name_box.TextChanged += self.on_name
         self.search_box.TextChanged += self.on_search
@@ -912,10 +968,88 @@ class GroupEditor(object):
     def on_search(self, sender, args):
         self.render_worksets()
 
+    # ---------- наименование РБ ----------
+    def render_rules(self):
+        panel = self.rules_panel
+        panel.Children.Clear()
+        for index, rule in enumerate(self.naming['rules']):
+            row = Grid()
+            row.Margin = Thickness(0, 0, 0, 4)
+            for width in (GridLength(1, GridUnitType.Star), GridLength(18),
+                          GridLength(1, GridUnitType.Star), GridLength(30)):
+                col = ColumnDefinition()
+                col.Width = width
+                row.ColumnDefinitions.Add(col)
+            find = TextBox()
+            find.Text = rule['find']
+            find.TextChanged += self._rule_handler(index, 'find')
+            arrow = _text(u'→')
+            arrow.HorizontalAlignment = HorizontalAlignment.Center
+            repl = TextBox()
+            repl.Text = rule['replace']
+            repl.TextChanged += self._rule_handler(index, 'replace')
+            remove = Button()
+            remove.Content = u'✕'
+            remove.ToolTip = u'Удалить правило'
+            remove.Margin = Thickness(4, 0, 0, 0)
+            remove.Click += self._remove_handler(index)
+            for col, ctl in enumerate((find, arrow, repl, remove)):
+                Grid.SetColumn(ctl, col)
+                row.Children.Add(ctl)
+            panel.Children.Add(row)
+        if not self.naming['rules']:
+            panel.Children.Add(_text(u'Правил нет. Пример: найти «Связи » → заменить на пусто.',
+                                     gray=True))
+        self.render_preview()
+
+    def _rule_handler(self, index, field):
+        def handler(sender, args):
+            self.naming['rules'][index][field] = sender.Text
+            self.render_preview()
+        return handler
+
+    def _remove_handler(self, index):
+        def handler(sender, args):
+            del self.naming['rules'][index]
+            self.render_rules()
+        return handler
+
+    def on_add_rule(self, sender, args):
+        self.naming['rules'].append({'find': u'', 'replace': u''})
+        self.render_rules()
+        last = self.rules_panel.Children[len(self.naming['rules']) - 1]
+        last.Children[0].Focus()
+
+    def on_strip_prefix(self, sender, args):
+        self.naming['strip_prefix'] = bool(self.strip_prefix_box.IsChecked)
+        self.render_preview()
+
+    def render_preview(self):
+        panel = self.preview_panel
+        panel.Children.Clear()
+        naming = {'strip_prefix': self.naming['strip_prefix'],
+                  'rules': [r for r in self.naming['rules'] if r['find']]}
+        for name in self.model_names:
+            short = vm_profile.short_workset_name(name, naming)
+            row = TextBlock()
+            row.Margin = Thickness(0, 1, 0, 1)
+            row.TextTrimming = TextTrimming.CharacterEllipsis
+            old = Run(name + u'  →  ')
+            old.Foreground = TEXT_GRAY
+            new = Run(short)
+            new.FontWeight = FontWeights.SemiBold
+            row.Inlines.Add(old)
+            row.Inlines.Add(new)
+            panel.Children.Add(row)
+        if not self.model_names:
+            panel.Children.Add(_text(u'Откройте модель с рабочими наборами, чтобы увидеть пример.',
+                                     gray=True))
+
     def on_ok(self, sender, args):
         # порядок наборов в группе — как в модели, отсутствующие в конце
         order = dict((n, i) for i, n in enumerate(self.model_names))
         for group in self.groups:
             group['worksets'].sort(key=lambda n: (order.get(n, len(order)), n.lower()))
-        self.result = self.groups
+        self.naming['rules'] = [r for r in self.naming['rules'] if r['find']]
+        self.result = (self.groups, self.naming)
         self.win.DialogResult = True
