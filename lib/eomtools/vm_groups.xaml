@@ -50,6 +50,49 @@
         </Grid>
       </TabItem>
 
+      <TabItem Header="Подгруппы">
+        <Grid Margin="6">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="250"/>
+            <ColumnDefinition Width="10"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <DockPanel Grid.Column="0">
+            <TextBlock DockPanel.Dock="Top" Text="Подгруппы списка РБ" FontWeight="Bold" Margin="0,0,0,4"/>
+            <WrapPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+              <Button x:Name="sec_add_button" Content="Добавить" Padding="8,3" Margin="0,0,4,4"/>
+              <Button x:Name="sec_delete_button" Content="Удалить" Padding="8,3" Margin="0,0,4,4"/>
+              <Button x:Name="sec_up_button" Content="↑" Padding="10,3" Margin="0,0,4,4" ToolTip="Выше"/>
+              <Button x:Name="sec_down_button" Content="↓" Padding="10,3" Margin="0,0,4,4" ToolTip="Ниже"/>
+              <Button x:Name="sec_reset_button" Content="По умолчанию" Padding="8,3" Margin="0,0,0,4"
+                      ToolTip="Вернуть подгруппы 0 — Связи, 1 — Второстепенные, 2 — ЭОМ, Прочие"/>
+            </WrapPanel>
+            <ListBox x:Name="sec_list"/>
+          </DockPanel>
+          <DockPanel Grid.Column="2">
+            <StackPanel DockPanel.Dock="Top">
+              <TextBlock Text="Название подгруппы" FontWeight="Bold"/>
+              <TextBox x:Name="sec_name_box" Margin="0,3,0,6"/>
+              <CheckBox x:Name="sec_hidden_box" Margin="0,0,0,8">
+                <TextBlock Text="Скрыть на панели (её РБ не показываются и не меняются кнопками All On / All Off)"
+                           TextWrapping="Wrap"/>
+              </CheckBox>
+              <TextBlock Text="Правила: какие РБ попадают в подгруппу (по одному в строке)" FontWeight="Bold"/>
+              <TextBlock TextWrapping="Wrap" Foreground="Gray" Margin="0,2,0,4"
+                         Text="Текст без * — РБ, в имени которого он есть (например К01). Со * и ? — маска на всё имя (например 0_*). Регистр не важен. Если РБ подходит под несколько подгрупп, он попадает туда, где правило длиннее (точнее). Подгруппа без правил собирает всё, что не подошло никуда."/>
+              <TextBox x:Name="sec_patterns_box" AcceptsReturn="True" Height="80"
+                       VerticalScrollBarVisibility="Auto" Margin="0,0,0,8"/>
+              <TextBlock x:Name="sec_count_label" Text="РБ этой модели в подгруппе" FontWeight="Bold" Margin="0,0,0,3"/>
+            </StackPanel>
+            <Border BorderBrush="Gray" BorderThickness="1">
+              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="sec_preview_panel" Margin="4"/>
+              </ScrollViewer>
+            </Border>
+          </DockPanel>
+        </Grid>
+      </TabItem>
+
       <TabItem Header="Наименование РБ">
         <Grid Margin="6">
           <Grid.ColumnDefinitions>

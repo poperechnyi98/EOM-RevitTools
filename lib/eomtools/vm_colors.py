@@ -82,6 +82,20 @@ def shared_names(info):
     return own & linked
 
 
+def present_names(info):
+    """{'own': имена РБ нашей модели, 'link': имена РБ во всех связях}."""
+    linked = set()
+    for link in info['links']:
+        linked.update(link['worksets'])
+    return {'own': set(info['own']), 'link': linked}
+
+
+def missing_items(info, items):
+    """Пункты схемы, РБ которых нет в этой модели (в своей области: наша/связи)."""
+    present = present_names(info)
+    return [it for it in items if it['name'] not in present[it['scope']]]
+
+
 def filter_name(item, shared):
     name = PREFIX + item['name']
     if item['scope'] == 'link' and item['name'] in shared:
@@ -259,16 +273,28 @@ def apply(doc, view, colors, allow_template, label):
     """Создать недостающие и обновить существующие фильтры схемы на виде (или шаблоне).
 
     Фильтры 3_ВСЕ_РБ_, которых нет в схеме, не трогаются (снимает их только «Снять»).
-    Возвращает число фильтров схемы на виде."""
+    Возвращает (число фильтров схемы на виде, пропущено пунктов — РБ нет в модели)."""
     owner = vm_revit._owner(doc, view, vm_revit.targets(doc, view)['filters'], 'filters',
                             allow_template)
     info = scan(doc)
     shared = shared_names(info)
-    existing_names = set(info['own'])
-    for link in info['links']:
-        existing_names.update(link['worksets'])
+    present = present_names(info)
 
-    items = [it for it in colors['items'] if it['enabled'] and it['name'] in existing_names]
+    # РБ схемы, которых в этой модели нет (например, схема из другого проекта), пропускаем.
+    # Два пункта, дающие одно имя фильтра (2_ОКК «наш» без РБ у нас и 2_ОКК «в связях»),
+    # раньше создавали фильтр дважды — Revit отказывал, и не применялось ничего.
+    items, names, skipped = [], set(), 0
+    for it in colors['items']:
+        if not it['enabled']:
+            continue
+        if it['name'] not in present[it['scope']]:
+            skipped += 1
+            continue
+        fname = filter_name(it, shared)
+        if fname in names:
+            continue
+        names.add(fname)
+        items.append(it)
     ws_param = ElementId(BuiltInParameter.ELEM_PARTITION_PARAM)
     need_split = any(it['name'] in shared and it['scope'] == 'own' for it in items)
     split_param = None
@@ -306,6 +332,7 @@ def apply(doc, view, colors, allow_template, label):
             pfe = by_name.get(name)
             if pfe is None:
                 pfe = ParameterFilterElement.Create(doc, name, cats, element_filter)
+                by_name[name] = pfe
             else:
                 pfe.SetCategories(cats)
                 pfe.SetElementFilter(element_filter)
@@ -316,9 +343,11 @@ def apply(doc, view, colors, allow_template, label):
         _links_below_own(doc, owner, shared)
         result.append(len(wanted))
 
+    if not items:
+        return 0, skipped
     result = []
     vm_revit._run(doc, label, action)
-    return result[0] if result else 0
+    return (result[0] if result else 0), skipped
 
 
 def clear(doc, view, allow_template, label):

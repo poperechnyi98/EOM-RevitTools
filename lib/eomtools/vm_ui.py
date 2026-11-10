@@ -12,7 +12,6 @@ except NameError:
 import copy
 import io
 import os
-import re
 
 import clr
 clr.AddReference('PresentationFramework')
@@ -62,9 +61,7 @@ TEXT_GRAY = Brushes.Gray
 TEXT_RED = Brushes.Firebrick
 TEXT_ORANGE = Brushes.DarkOrange
 
-# Подгруппы списка рабочих наборов по префиксу «N_» в имени
-SECTION_TITLES = {u'0': u'0 — Связи', u'1': u'1 — Второстепенные', u'2': u'2 — ЭОМ'}
-OTHER_SECTION = u'Прочие'
+OTHER_SECTION = vm_profile.OTHER_SECTION
 
 
 # Сокращения названий категорий на плитках (полное имя — в подсказке).
@@ -110,17 +107,6 @@ def short_category_name(name):
     for long_, short in CATEGORY_ABBR:
         text = text.replace(long_, short)
     return u' '.join(text.split())
-
-
-def section_key(name):
-    m = re.match(r'^(\d+)_', name)
-    return int(m.group(1)) if m else None
-
-
-def section_title(key):
-    if key is None:
-        return OTHER_SECTION
-    return SECTION_TITLES.get(unicode(key), u'{0}_…'.format(key))
 
 
 def _load_xaml(name):
@@ -182,9 +168,10 @@ class Controller(object):
              'save_button', 'load_button', 'status_label',
              # рабочие наборы
              'all_on_button', 'all_off_button', 'groups_button', 'groups_panel', 'search_box',
-             'worksets_panel', 'content_panel',
+             'worksets_panel', 'content_panel', 'hidden_sections_label',
              # категории
              'cat_all_on_button', 'cat_all_off_button', 'cat_setup_button', 'cat_content_panel',
+             'model_on_button', 'model_off_button', 'annotation_on_button', 'annotation_off_button',
              'model_header', 'model_panel', 'annotation_header', 'annotation_panel',
              # цвета
              'colors_apply_button', 'colors_clear_button', 'colors_setup_button',
@@ -224,6 +211,9 @@ class Controller(object):
         self.cat_all_on_button.Click += self.on_cat_all_on
         self.cat_all_off_button.Click += self.on_cat_all_off
         self.cat_setup_button.Click += self.on_cat_setup
+        for kind in KINDS:
+            getattr(self, kind + '_on_button').Click += self._kind_handler(kind, True)
+            getattr(self, kind + '_off_button').Click += self._kind_handler(kind, False)
         self.colors_apply_button.Click += self.on_colors_apply
         self.colors_clear_button.Click += self.on_colors_clear
         self.colors_setup_button.Click += self.on_colors_setup
@@ -327,10 +317,13 @@ class Controller(object):
                 return
             allow = self.profile['allow_template']
             if kind == 'colors_apply':
-                applied = vm_colors.apply(doc, uidoc.ActiveView, self.profile['colors'],
-                                          allow, u'цвета по рабочим наборам')
+                applied, skipped = vm_colors.apply(doc, uidoc.ActiveView, self.profile['colors'],
+                                                   allow, u'цвета по рабочим наборам')
                 self.refresh(uiapp)
-                self.status(u'Цвета применены: фильтров схемы на виде {0}.'.format(applied))
+                msg = u'Цвета применены: фильтров схемы на виде {0}.'.format(applied)
+                if skipped:
+                    msg += u' Пропущено РБ, которых нет в модели: {0}.'.format(skipped)
+                self.status(msg)
                 return
             if kind in ('colors_toggle', 'colors_update'):
                 item = self.profile['colors']['items'][p['index']]
@@ -417,7 +410,9 @@ class Controller(object):
         for ctl in (self.all_on_button, self.all_off_button, self.groups_panel, self.worksets_panel):
             ctl.IsEnabled = ws
         for kind in KINDS:
-            getattr(self, kind + '_panel').IsEnabled = self.can_edit(kind)
+            ok = self.can_edit(kind)
+            for suffix in ('_panel', '_on_button', '_off_button'):
+                getattr(self, kind + suffix).IsEnabled = ok
         any_cat = self.can_edit('model') or self.can_edit('annotation')
         self.cat_all_on_button.IsEnabled = any_cat
         self.cat_all_off_button.IsEnabled = any_cat
@@ -587,7 +582,8 @@ class Controller(object):
         self.new_wrap('ws', panel)
         vis = self.visibility()
         for index, group in enumerate(groups):
-            states = [vis[n] for n in group['worksets'] if n in vis]
+            # None — вид не поддерживается (лист и т.п.): видимость неизвестна
+            states = [vis[n] for n in group['worksets'] if vis.get(n) is not None]
             if not states:
                 state = 'none'
             elif all(states):
@@ -601,46 +597,79 @@ class Controller(object):
             text = u'{0}  ({1})'.format(group['name'], len(group['worksets']))
             panel.Children.Add(self.tile(text, state, tip, (index, state), self.on_group_tile))
 
+    def ws_sections(self):
+        """[(подгруппа или None, скрыта ли, [имена РБ])] по настройке «Подгруппы»."""
+        sections = self.profile['sections']
+        names = [w['name'] for w in self.snap['worksets']] if self.snap else []
+        out = []
+        for index, part in vm_profile.split_sections(names, sections):
+            section = sections[index] if index is not None else None
+            out.append((section, bool(section and section['hidden']), part))
+        return out
+
     def render_worksets(self):
         panel = self.worksets_panel
         panel.Children.Clear()
+        self.hidden_sections_label.Text = u''
         if not self.snap or not self.snap['worksets']:
             return
         query = self.search_box.Text
-        sections = {}
-        for item in self.snap['worksets']:
-            if _matches(item['name'], query):
-                sections.setdefault(section_key(item['name']), []).append(item)
-        keys = sorted(k for k in sections if k is not None)
-        if None in sections:
-            keys.append(None)
-        for key in keys:
-            items = sections[key]
-            on = sum(1 for i in items if i['visible'])
-            header = _text(u'{0}   {1}/{2}'.format(section_title(key), on, len(items)))
+        by_name = dict((w['name'], w) for w in self.snap['worksets'])
+        naming = self.profile['workset_names']
+        hidden = []
+        for section, is_hidden, names in self.ws_sections():
+            title = section['name'] if section else OTHER_SECTION
+            if is_hidden:
+                hidden.append(u'{0} ({1})'.format(title, len(names)))
+                continue
+            items = [by_name[n] for n in names if _matches(n, query)]
+            if not items:
+                continue
+            known = [i for i in items if i['visible'] is not None]
+            if known:
+                count = u'{0}/{1}'.format(sum(1 for i in known if i['visible']), len(items))
+            else:
+                count = unicode(len(items))
+            header = _text(u'{0}   {1}'.format(title, count))
             header.FontWeight = FontWeights.Bold
             header.Margin = Thickness(0, 4, 0, 1)
             panel.Children.Add(header)
             wrap = self.new_wrap('ws')
-            naming = self.profile['workset_names']
             for item in items:
-                state = 'on' if item['visible'] else 'off'
+                if item['visible'] is None:
+                    state = 'none'
+                    tip = u'{0}\nОткройте план, разрез, фасад или 3D-вид, чтобы переключать.'.format(
+                        item['name'])
+                else:
+                    state = 'on' if item['visible'] else 'off'
+                    tip = item['name']
                 short = vm_profile.short_workset_name(item['name'], naming)
-                wrap.Children.Add(self.tile(short, state, item['name'],
+                wrap.Children.Add(self.tile(short, state, tip,
                                             (item['name'], item['visible']), self.on_workset_tile))
             panel.Children.Add(wrap)
+        if hidden:
+            self.hidden_sections_label.Text = (u'Скрытые подгруппы: {0}. Показать — ⚙ → «Подгруппы».'
+                                               .format(u', '.join(hidden)))
 
     def all_names(self):
         return [w['name'] for w in self.snap['worksets']] if self.snap else []
+
+    def shown_names(self):
+        """РБ видимых подгрупп — на них действуют All On / All Off."""
+        out = []
+        for _, is_hidden, names in self.ws_sections():
+            if not is_hidden:
+                out.extend(names)
+        return out
 
     def set_worksets(self, names, show, label):
         self.request('worksets', names=list(names), show=show, label=label)
 
     def on_all_on(self, sender, args):
-        self.set_worksets(self.all_names(), True, u'все рабочие наборы — On')
+        self.set_worksets(self.shown_names(), True, u'все рабочие наборы — On')
 
     def on_all_off(self, sender, args):
-        self.set_worksets(self.all_names(), False, u'все рабочие наборы — Off')
+        self.set_worksets(self.shown_names(), False, u'все рабочие наборы — Off')
 
     def on_group_tile(self, sender, args):
         index, state = sender.Tag
@@ -663,11 +692,12 @@ class Controller(object):
 
     def on_edit_groups(self, sender, args):
         editor = GroupEditor(self.all_names(), self.profile['groups'],
-                             self.profile['workset_names'], self.uiapp.MainWindowHandle)
+                             self.profile['workset_names'], self.profile['sections'],
+                             self.uiapp.MainWindowHandle)
         result = editor.show()
         if result is None:
             return
-        self.profile['groups'], self.profile['workset_names'] = result
+        self.profile['groups'], self.profile['workset_names'], self.profile['sections'] = result
         self.save_profile()
         self.render_ws_area()
         self.update_enabled()
@@ -716,19 +746,28 @@ class Controller(object):
         self.set_categories({kind: [key]}, show, u'категория «{0}» — {1}'.format(
             name, u'On' if show else u'Off'))
 
-    def _all_categories(self, show):
-        keys = dict((kind, list(self.profile['categories'][kind])) for kind in KINDS
+    def _all_categories(self, show, kinds=KINDS):
+        keys = dict((kind, list(self.profile['categories'][kind])) for kind in kinds
                     if self.can_edit(kind))
         if not any(keys.values()):
             self.status(u'Нет быстрых категорий, которые можно изменить на этом виде.')
             return
-        self.set_categories(keys, show, u'все быстрые категории — {0}'.format(u'On' if show else u'Off'))
+        what = (u'все быстрые категории' if len(kinds) > 1
+                else u'быстрые категории: {0}'.format(KIND_TITLES[kinds[0]].lower()))
+        self.set_categories(keys, show, u'{0} — {1}'.format(what, u'On' if show else u'Off'))
 
     def on_cat_all_on(self, sender, args):
         self._all_categories(True)
 
     def on_cat_all_off(self, sender, args):
         self._all_categories(False)
+
+    def _kind_handler(self, kind, show):
+        """On/Off в заголовке раздела «Элементы» или «Аннотации»."""
+        def handler(sender, args):
+            args.Handled = True   # не сворачивать раздел
+            self._all_categories(show, (kind,))
+        return handler
 
     def on_cat_setup(self, sender, args):
         catalog = self.snap['catalog'] if self.snap else {'model': [], 'annotation': []}
@@ -750,6 +789,7 @@ class Controller(object):
         правда), потом РБ из схемы, которых на виде ещё нет."""
         info = self.color_info
         shared = vm_colors.shared_names(info) if info else set()
+        present = vm_colors.present_names(info) if info else None
         rows, seen = [], set()
         for f in (self.colors_applied or []):
             rows.append(dict(f, on_view=True))
@@ -757,6 +797,8 @@ class Controller(object):
         for it in self.profile['colors']['items']:
             if not it['enabled']:
                 continue
+            if present is not None and it['name'] not in present[it['scope']]:
+                continue   # РБ нет в этой модели — показываем отдельной строкой внизу
             fname = vm_colors.filter_name(it, shared)
             if fname in seen:
                 continue
@@ -782,7 +824,6 @@ class Controller(object):
         if not rows:
             panel.Children.Add(_text(u'На виде нет фильтров 3_ВСЕ_РБ_, схема пуста — нажмите ⚙.',
                                      gray=True))
-            return
         for scope, title, present in (('own', u'Наша модель', own), ('link', u'В связях', linked)):
             part = [r for r in rows if r['scope'] == scope]
             if not part:
@@ -793,6 +834,53 @@ class Controller(object):
             panel.Children.Add(header)
             for row in part:
                 panel.Children.Add(self.color_row(row, present))
+        self.render_missing_colors()
+
+    def missing_colors(self):
+        if not self.color_info:
+            return []
+        items = [it for it in self.profile['colors']['items'] if it['enabled']]
+        return vm_colors.missing_items(self.color_info, items)
+
+    def render_missing_colors(self):
+        missing = self.missing_colors()
+        if not missing:
+            return
+        box = StackPanel()
+        box.Margin = Thickness(0, 10, 0, 0)
+        names = [u'{0}{1}'.format(it['name'], u'' if it['scope'] == 'own' else u' (связи)')
+                 for it in missing]
+        note = _text(u'Нет в этой модели, не применяются: {0}.'.format(u', '.join(names)), gray=True)
+        note.TextWrapping = TextWrapping.Wrap
+        note.TextTrimming = getattr(TextTrimming, 'None')   # .None — синтаксическая ошибка в IronPython
+        note.FontSize = 11
+        box.Children.Add(note)
+        button = Button()
+        button.Content = u'Убрать их из схемы'
+        button.HorizontalAlignment = HorizontalAlignment.Left
+        button.Margin = Thickness(0, 4, 0, 0)
+        button.ToolTip = u'Удалить эти РБ из вашей схемы цветов (схема общая для всех проектов)'
+        button.Click += self.on_colors_drop_missing
+        box.Children.Add(button)
+        self.colors_panel.Children.Add(box)
+
+    def on_colors_drop_missing(self, sender, args):
+        missing = self.missing_colors()
+        if not missing:
+            return
+        answer = MessageBox.Show(
+            u'Убрать из схемы цветов: {0}?\n\nСхема общая для всех проектов — в других моделях, '
+            u'где эти РБ есть, их придётся настроить заново.'.format(
+                u', '.join(it['name'] for it in missing)),
+            u'View Manager', MessageBoxButton.YesNo, MessageBoxImage.Question)
+        if answer != MessageBoxResult.Yes:
+            return
+        drop = set((it['scope'], it['name']) for it in missing)
+        self.profile['colors']['items'] = [it for it in self.profile['colors']['items']
+                                           if (it['scope'], it['name']) not in drop]
+        self.save_profile()
+        self.render_colors()
+        self.status(u'Убрано из схемы: {0}.'.format(len(drop)))
 
     def color_row(self, row, present):
         grid = Grid()
@@ -927,6 +1015,10 @@ class Controller(object):
     def on_colors_apply(self, sender, args):
         if not any(i['enabled'] for i in self.profile['colors']['items']):
             self.status(u'Схема пуста — сначала настройте цвета (⚙).')
+            return
+        enabled = [i for i in self.profile['colors']['items'] if i['enabled']]
+        if self.color_info and len(self.missing_colors()) == len(enabled):
+            self.status(u'Ни одного РБ из схемы нет в этой модели — настройте цвета (⚙).')
             return
         self.request('colors_apply')
 
@@ -1422,9 +1514,12 @@ class GroupEditor(object):
     NAMES = ('groups_list', 'add_button', 'delete_button', 'up_button', 'down_button',
              'name_box', 'count_label', 'search_box', 'check_shown_button',
              'uncheck_shown_button', 'worksets_panel', 'ok_button',
-             'rules_panel', 'preview_panel', 'add_rule_button')
+             'rules_panel', 'preview_panel', 'add_rule_button',
+             'sec_list', 'sec_add_button', 'sec_delete_button', 'sec_up_button', 'sec_down_button',
+             'sec_reset_button', 'sec_name_box', 'sec_hidden_box', 'sec_patterns_box',
+             'sec_count_label', 'sec_preview_panel')
 
-    def __init__(self, model_names, groups, naming, owner_hwnd):
+    def __init__(self, model_names, groups, naming, sections, owner_hwnd):
         self.win = _load_xaml('vm_groups.xaml')
         for name in self.NAMES:
             setattr(self, name, self.win.FindName(name))
@@ -1432,11 +1527,24 @@ class GroupEditor(object):
         self.model_names = list(model_names)
         self.groups = copy.deepcopy(groups)
         self.naming = copy.deepcopy(naming)
+        self.sections = copy.deepcopy(sections)
         self.current = None
         self.loading = False
+        self.sec_current = None
+        self.sec_loading = False
         self.result = None
         self.add_rule_button.Click += self.on_add_rule
         self.render_rules()
+        self.sec_list.SelectionChanged += self.on_sec_select
+        self.sec_name_box.TextChanged += self.on_sec_name
+        self.sec_hidden_box.Click += self.on_sec_hidden
+        self.sec_patterns_box.TextChanged += self.on_sec_patterns
+        self.sec_add_button.Click += self.on_sec_add
+        self.sec_delete_button.Click += self.on_sec_delete
+        self.sec_up_button.Click += self._sec_move(-1)
+        self.sec_down_button.Click += self._sec_move(1)
+        self.sec_reset_button.Click += self.on_sec_reset
+        self.sec_fill(0 if self.sections else -1)
         self.groups_list.SelectionChanged += self.on_select
         self.name_box.TextChanged += self.on_name
         self.search_box.TextChanged += self.on_search
@@ -1589,6 +1697,128 @@ class GroupEditor(object):
     def on_search(self, sender, args):
         self.render_worksets()
 
+    # ---------- подгруппы списка РБ ----------
+    @staticmethod
+    def _sec_caption(section):
+        return section['name'] + (u'   (скрыта)' if section['hidden'] else u'')
+
+    def sec_fill(self, select):
+        self.sec_loading = True
+        self.sec_list.Items.Clear()
+        for s in self.sections:
+            self.sec_list.Items.Add(self._sec_caption(s))
+        self.sec_list.SelectedIndex = select
+        self.sec_loading = False
+        self.sec_load()
+
+    def on_sec_select(self, sender, args):
+        if not self.sec_loading:
+            self.sec_load()
+
+    def sec_load(self):
+        index = self.sec_list.SelectedIndex
+        self.sec_current = index if index >= 0 else None
+        has = self.sec_current is not None
+        self.sec_loading = True
+        s = self.sections[index] if has else None
+        self.sec_name_box.Text = s['name'] if has else u''
+        self.sec_hidden_box.IsChecked = bool(has and s['hidden'])
+        self.sec_patterns_box.Text = u'\r\n'.join(s['patterns']) if has else u''
+        self.sec_loading = False
+        for ctl in (self.sec_name_box, self.sec_hidden_box, self.sec_patterns_box,
+                    self.sec_delete_button, self.sec_up_button, self.sec_down_button):
+            ctl.IsEnabled = has
+        self.sec_preview()
+
+    def sec_update_caption(self):
+        index = self.sec_current
+        self.sec_loading = True
+        self.sec_list.Items.RemoveAt(index)
+        self.sec_list.Items.Insert(index, self._sec_caption(self.sections[index]))
+        self.sec_list.SelectedIndex = index
+        self.sec_loading = False
+
+    def on_sec_name(self, sender, args):
+        if self.sec_loading or self.sec_current is None:
+            return
+        self.sections[self.sec_current]['name'] = self.sec_name_box.Text.strip() or u'Без названия'
+        self.sec_update_caption()
+
+    def on_sec_hidden(self, sender, args):
+        if self.sec_current is None:
+            return
+        self.sections[self.sec_current]['hidden'] = bool(self.sec_hidden_box.IsChecked)
+        self.sec_update_caption()
+
+    def on_sec_patterns(self, sender, args):
+        if self.sec_loading or self.sec_current is None:
+            return
+        lines = [l.strip() for l in (self.sec_patterns_box.Text or u'').splitlines()]
+        patterns = []
+        for l in lines:
+            if l and l not in patterns:
+                patterns.append(l)
+        self.sections[self.sec_current]['patterns'] = patterns
+        self.sec_preview()
+
+    def on_sec_add(self, sender, args):
+        taken = set(s['name'] for s in self.sections)
+        n = 1
+        while u'Подгруппа {0}'.format(n) in taken:
+            n += 1
+        # новую ставим перед «всем остальным», чтобы она была видна в общем порядке
+        pos = len(self.sections)
+        for i, s in enumerate(self.sections):
+            if not s['patterns']:
+                pos = i
+                break
+        self.sections.insert(pos, {'name': u'Подгруппа {0}'.format(n), 'patterns': [],
+                                   'hidden': False})
+        self.sec_fill(pos)
+        self.sec_name_box.Focus()
+        self.sec_name_box.SelectAll()
+
+    def on_sec_delete(self, sender, args):
+        if self.sec_current is None:
+            return
+        index = self.sec_current
+        del self.sections[index]
+        self.sec_fill(min(index, len(self.sections) - 1))
+
+    def _sec_move(self, delta):
+        def handler(sender, args):
+            i = self.sec_current
+            if i is None or not (0 <= i + delta < len(self.sections)):
+                return
+            self.sections[i], self.sections[i + delta] = self.sections[i + delta], self.sections[i]
+            self.sec_fill(i + delta)
+        return handler
+
+    def on_sec_reset(self, sender, args):
+        answer = MessageBox.Show(self.win, u'Вернуть подгруппы по умолчанию? Ваши подгруппы удалятся.',
+                                 u'View Manager', MessageBoxButton.YesNo, MessageBoxImage.Question)
+        if answer != MessageBoxResult.Yes:
+            return
+        self.sections = vm_profile.default_sections()
+        self.sec_fill(0)
+
+    def sec_preview(self):
+        panel = self.sec_preview_panel
+        panel.Children.Clear()
+        if self.sec_current is None:
+            self.sec_count_label.Text = u'РБ этой модели в подгруппе'
+            return
+        names = [n for n in self.model_names
+                 if vm_profile.section_index(n, self.sections) == self.sec_current]
+        self.sec_count_label.Text = u'РБ этой модели в подгруппе: {0}'.format(len(names))
+        for n in names:
+            panel.Children.Add(_text(n))
+        if not self.model_names:
+            panel.Children.Add(_text(u'Откройте модель с рабочими наборами, чтобы увидеть состав.',
+                                     gray=True))
+        elif not names:
+            panel.Children.Add(_text(u'Ни один РБ этой модели сюда не попадает.', gray=True))
+
     # ---------- наименование РБ ----------
     def render_rules(self):
         panel = self.rules_panel
@@ -1667,5 +1897,5 @@ class GroupEditor(object):
         for group in self.groups:
             group['worksets'].sort(key=lambda n: (order.get(n, len(order)), n.lower()))
         self.naming['rules'] = [r for r in self.naming['rules'] if r['find']]
-        self.result = (self.groups, self.naming)
+        self.result = (self.groups, self.naming, self.sections)
         self.win.DialogResult = True

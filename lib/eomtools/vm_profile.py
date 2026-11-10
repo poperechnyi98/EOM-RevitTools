@@ -12,6 +12,7 @@ except NameError:
     unicode = str
 
 import copy
+import fnmatch
 import io
 import json
 import os
@@ -19,9 +20,22 @@ import os
 FILE_NAME = 'EOMViewManager_profile.json'
 VERSION = 1
 
+OTHER_SECTION = u'Прочие'
+
+
+def default_sections():
+    """Подгруппы списка рабочих наборов по умолчанию (как было раньше — по префиксу)."""
+    return [{'name': u'0 — Связи', 'patterns': [u'0_*'], 'hidden': False},
+            {'name': u'1 — Второстепенные', 'patterns': [u'1_*'], 'hidden': False},
+            {'name': u'2 — ЭОМ', 'patterns': [u'2_*'], 'hidden': False},
+            {'name': OTHER_SECTION, 'patterns': [], 'hidden': False}]
+
 
 def default():
     return {'version': VERSION, 'allow_template': False, 'groups': [],
+            # подгруппы списка РБ на панели: {'name', 'patterns': [правила], 'hidden'};
+            # подгруппа без правил — «всё остальное»
+            'sections': default_sections(),
             'categories': {'model': [], 'annotation': []},
             # как сокращать имена рабочих наборов на плитках (только показ)
             'workset_names': {'rules': []},
@@ -91,6 +105,14 @@ def normalize(data):
         if isinstance(g, dict) and g.get('name'):
             result['groups'].append({'name': unicode(g['name']),
                                      'worksets': _names(g.get('worksets'))})
+    sections = data.get('sections')
+    if isinstance(sections, list):
+        result['sections'] = []
+        for s in sections:
+            if isinstance(s, dict) and s.get('name'):
+                result['sections'].append({'name': unicode(s['name']),
+                                           'patterns': _names(s.get('patterns')),
+                                           'hidden': bool(s.get('hidden', False))})
     cats = data.get('categories') or {}
     if isinstance(cats, dict):
         result['categories']['model'] = _names(cats.get('model'))
@@ -113,6 +135,52 @@ def short_workset_name(name, naming):
         text = text.replace(rule['find'], rule['replace'])
     text = u' '.join(text.split())
     return text or name
+
+
+def _pattern_score(pattern, name):
+    """Насколько правило подходит к имени РБ: None — не подходит, иначе «точность»
+    (число значащих символов правила). Без * и ? — поиск подстроки, с ними — маска
+    на всё имя. Регистр не важен."""
+    pat = pattern.strip().lower()
+    if not pat:
+        return None
+    low = name.lower()
+    if '*' in pat or '?' in pat:
+        ok = fnmatch.fnmatchcase(low, pat)
+    else:
+        ok = pat in low
+    if not ok:
+        return None
+    return len(pat.replace('*', u'').replace('?', u''))
+
+
+def section_index(name, sections):
+    """Индекс подгруппы для РБ: побеждает самое точное (длинное) правило, при равенстве —
+    подгруппа выше по списку. Не подошло ни одно правило — первая подгруппа без правил;
+    её нет — None (показывается как «Прочие»)."""
+    best, best_score = None, -1
+    for i, s in enumerate(sections):
+        for pat in s['patterns']:
+            score = _pattern_score(pat, name)
+            if score is not None and score > best_score:
+                best, best_score = i, score
+    if best is not None:
+        return best
+    for i, s in enumerate(sections):
+        if not s['patterns']:
+            return i
+    return None
+
+
+def split_sections(names, sections):
+    """[(индекс подгруппы или None, [имена])] в порядке подгрупп; пустые пропускаются."""
+    buckets = {}
+    for name in names:
+        buckets.setdefault(section_index(name, sections), []).append(name)
+    order = [i for i in range(len(sections)) if i in buckets]
+    if None in buckets:
+        order.append(None)
+    return [(i, buckets[i]) for i in order]
 
 
 def read_file(file_path):

@@ -310,6 +310,9 @@ def snapshot(doc, view, profile):
         return snap
     snap['catalog'] = category_catalog(doc)
     if not supported(view):
+        # лист, спецификация и т.п.: видимость РБ здесь не меняется, но список
+        # показываем (серым) — иначе сразу после открытия модели панель пустая
+        snap['worksets'] = [{'name': name, 'visible': None} for name, _ in user_worksets(doc)]
         return snap
     snap['supported'] = True
     tg = targets(doc, view)
