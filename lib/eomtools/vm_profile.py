@@ -23,19 +23,27 @@ VERSION = 1
 OTHER_SECTION = u'Прочие'
 
 
+def new_section(name, worksets=None, patterns=None, rest=False):
+    return {'name': name, 'worksets': list(worksets or []), 'patterns': list(patterns or []),
+            'hidden': False, 'rest': rest}
+
+
 def default_sections():
     """Подгруппы списка рабочих наборов по умолчанию (как было раньше — по префиксу)."""
-    return [{'name': u'0 — Связи', 'patterns': [u'0_*'], 'hidden': False},
-            {'name': u'1 — Второстепенные', 'patterns': [u'1_*'], 'hidden': False},
-            {'name': u'2 — ЭОМ', 'patterns': [u'2_*'], 'hidden': False},
-            {'name': OTHER_SECTION, 'patterns': [], 'hidden': False}]
+    return [new_section(u'0 — Связи', patterns=[u'0_*']),
+            new_section(u'1 — Второстепенные', patterns=[u'1_*']),
+            new_section(u'2 — ЭОМ', patterns=[u'2_*']),
+            new_section(OTHER_SECTION, rest=True)]
 
 
 def default():
     return {'version': VERSION, 'allow_template': False, 'groups': [],
-            # подгруппы списка РБ на панели: {'name', 'patterns': [правила], 'hidden'};
-            # подгруппа без правил — «всё остальное»
+            # подгруппы списка РБ на панели:
+            # {'name', 'worksets': [имена, перетащенные вручную], 'patterns': [маски вида 0_*],
+            #  'hidden': скрыта с панели, 'rest': собирает всё, что никуда не попало}
             'sections': default_sections(),
+            # свёрнутые на панели подгруппы (по названию)
+            'collapsed': [],
             'categories': {'model': [], 'annotation': []},
             # как сокращать имена рабочих наборов на плитках (только показ)
             'workset_names': {'rules': []},
@@ -110,9 +118,15 @@ def normalize(data):
         result['sections'] = []
         for s in sections:
             if isinstance(s, dict) and s.get('name'):
-                result['sections'].append({'name': unicode(s['name']),
-                                           'patterns': _names(s.get('patterns')),
-                                           'hidden': bool(s.get('hidden', False))})
+                patterns = _names(s.get('patterns'))
+                if 'rest' in s:
+                    rest = bool(s.get('rest'))
+                else:   # профиль прошлой версии: подгруппа без правил собирала остальное
+                    rest = not patterns and 'worksets' not in s
+                section = new_section(unicode(s['name']), _names(s.get('worksets')), patterns, rest)
+                section['hidden'] = bool(s.get('hidden', False))
+                result['sections'].append(section)
+    result['collapsed'] = _names(data.get('collapsed'))
     cats = data.get('categories') or {}
     if isinstance(cats, dict):
         result['categories']['model'] = _names(cats.get('model'))
@@ -154,10 +168,10 @@ def _pattern_score(pattern, name):
     return len(pat.replace('*', u'').replace('?', u''))
 
 
-def section_index(name, sections):
-    """Индекс подгруппы для РБ: побеждает самое точное (длинное) правило, при равенстве —
-    подгруппа выше по списку. Не подошло ни одно правило — первая подгруппа без правил;
-    её нет — None (показывается как «Прочие»)."""
+def auto_section(name, sections):
+    """Подгруппа для РБ, который никуда не перетащен вручную: по маске (побеждает самая
+    точная — длинная, при равенстве — выше по списку), иначе подгруппа «всё остальное»,
+    иначе None (показывается как «Прочие»)."""
     best, best_score = None, -1
     for i, s in enumerate(sections):
         for pat in s['patterns']:
@@ -167,20 +181,35 @@ def section_index(name, sections):
     if best is not None:
         return best
     for i, s in enumerate(sections):
-        if not s['patterns']:
+        if s.get('rest'):
             return i
     return None
 
 
+def section_members(names, sections):
+    """{индекс подгруппы или None: [(имя, 'manual'|'auto')]} в порядке names.
+
+    Перетащенный вручную РБ может быть в нескольких подгруппах сразу и тогда не попадает
+    ни в одну подгруппу автоматически."""
+    manual = [set(s['worksets']) for s in sections]
+    members = {}
+    for name in names:
+        hits = [i for i, ws in enumerate(manual) if name in ws]
+        if hits:
+            for i in hits:
+                members.setdefault(i, []).append((name, 'manual'))
+        else:
+            members.setdefault(auto_section(name, sections), []).append((name, 'auto'))
+    return members
+
+
 def split_sections(names, sections):
     """[(индекс подгруппы или None, [имена])] в порядке подгрупп; пустые пропускаются."""
-    buckets = {}
-    for name in names:
-        buckets.setdefault(section_index(name, sections), []).append(name)
-    order = [i for i in range(len(sections)) if i in buckets]
-    if None in buckets:
+    members = section_members(names, sections)
+    order = [i for i in range(len(sections)) if i in members]
+    if None in members:
         order.append(None)
-    return [(i, buckets[i]) for i in order]
+    return [(i, [n for n, _ in members[i]]) for i in order]
 
 
 def read_file(file_path):

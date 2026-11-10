@@ -12,6 +12,7 @@ except NameError:
 import copy
 import io
 import os
+import re
 
 import clr
 clr.AddReference('PresentationFramework')
@@ -21,15 +22,19 @@ from System.Windows import (CornerRadius, FontWeights, MessageBox, MessageBoxBut
                             MessageBoxImage, MessageBoxResult, Thickness, VerticalAlignment,
                             TextTrimming, TextWrapping)
 from System.Windows import GridLength, GridUnitType, HorizontalAlignment
+from System.Windows import (DataObject, DragDrop, DragDropEffects, DragDropKeyStates, FontStyles,
+                            SystemParameters, Visibility)
 from System.Windows.Controls import ColumnDefinition, Grid
 from System.Windows.Controls import Slider
-from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, ScrollViewer,
-                                     ScrollBarVisibility, StackPanel, TabItem, TextBlock, TextBox,
+from System.Windows.Controls import (Border, Button, CheckBox, DockPanel, Expander, ListBox,
+                                     ListBoxItem, ScrollViewer, ScrollBarVisibility, SelectionMode,
+                                     StackPanel, TabItem, TextBlock, TextBox,
                                      WrapPanel, Dock, Orientation)
 from System.Windows.Documents import LineBreak, Run
+from System.Windows.Input import Cursors, Keyboard, ModifierKeys, MouseButtonState
 from System.Windows.Interop import WindowInteropHelper
 from System.Windows.Markup import XamlReader
-from System.Windows.Media import Brushes, Color, SolidColorBrush
+from System.Windows.Media import Brushes, Color, SolidColorBrush, VisualTreeHelper
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.UI import ExternalEventRequest
 
@@ -109,9 +114,29 @@ def short_category_name(name):
     return u' '.join(text.split())
 
 
-def _load_xaml(name):
+# «None» у перечислений .NET — ключевое слово Python, обращаемся через getattr
+DDE_NONE = getattr(DragDropEffects, 'None')
+MOD_NONE = getattr(ModifierKeys, 'None')
+STYLE_SLOT = u'__VM_STYLE__'
+
+
+def _ctrl(args):
+    """Нажат ли Ctrl во время перетаскивания."""
+    return (args.KeyStates & DragDropKeyStates.ControlKey) == DragDropKeyStates.ControlKey
+
+
+def _read(name):
     with io.open(os.path.join(HERE, name), 'r', encoding='utf-8') as f:
-        return XamlReader.Parse(f.read())
+        return f.read()
+
+
+def _load_xaml(name):
+    """Загрузить XAML; окна настройки получают общий стиль vm_style.xaml на место
+    метки __VM_STYLE__."""
+    text = _read(name)
+    if STYLE_SLOT in text:
+        text = text.replace(STYLE_SLOT, _read('vm_style.xaml'))
+    return XamlReader.Parse(text)
 
 
 def _matches(text, query):
@@ -189,8 +214,8 @@ class Controller(object):
         for name in self.NAMES:
             setattr(self, name, self.root.FindName(name))
         self.tile_style = self.root.FindResource('Tile')
-        self.widths = {'ws': TILE_MIN_WIDTH, 'cat': TILE_MIN_WIDTH}
-        self.wraps = {'ws': [], 'cat': []}
+        self.widths = {'ws': TILE_MIN_WIDTH, 'wsx': TILE_MIN_WIDTH, 'cat': TILE_MIN_WIDTH}
+        self.wraps = {'ws': [], 'wsx': [], 'cat': []}
         self.profile = vm_profile.load()
         self.snap = None
         self.doc = None
@@ -526,6 +551,7 @@ class Controller(object):
 
     def on_ws_resize(self, sender, args):
         self._resize('ws', sender.ActualWidth)
+        self._resize('wsx', sender.ActualWidth - 22)   # подгруппы — внутри Expander
 
     def on_cat_resize(self, sender, args):
         self._resize('cat', sender.ActualWidth - 22)   # отступ содержимого Expander
@@ -568,6 +594,7 @@ class Controller(object):
 
     def render_ws_area(self):
         self.wraps['ws'] = []
+        self.wraps['wsx'] = []
         self.render_groups()
         self.render_worksets()
 
@@ -630,11 +657,8 @@ class Controller(object):
                 count = u'{0}/{1}'.format(sum(1 for i in known if i['visible']), len(items))
             else:
                 count = unicode(len(items))
-            header = _text(u'{0}   {1}'.format(title, count))
-            header.FontWeight = FontWeights.Bold
-            header.Margin = Thickness(0, 4, 0, 1)
-            panel.Children.Add(header)
-            wrap = self.new_wrap('ws')
+            wrap = self.new_wrap('wsx')
+            panel.Children.Add(self.section_expander(title, count, names, wrap, bool(query)))
             for item in items:
                 if item['visible'] is None:
                     state = 'none'
@@ -646,10 +670,59 @@ class Controller(object):
                 short = vm_profile.short_workset_name(item['name'], naming)
                 wrap.Children.Add(self.tile(short, state, tip,
                                             (item['name'], item['visible']), self.on_workset_tile))
-            panel.Children.Add(wrap)
         if hidden:
             self.hidden_sections_label.Text = (u'Скрытые подгруппы: {0}. Показать — ⚙ → «Подгруппы».'
                                                .format(u', '.join(hidden)))
+
+    def section_expander(self, title, count, names, wrap, searching):
+        """Подгруппа РБ на панели: сворачивается стрелкой (как разделы «Категорий»),
+        в заголовке — On/Off для всех её РБ. Свёрнутость запоминается в профиле."""
+        exp = Expander()
+        exp.Margin = Thickness(0, 2, 0, 4)
+        collapsed = title in self.profile['collapsed']
+        exp.IsExpanded = searching or not collapsed   # при поиске показываем найденное
+        head = StackPanel()
+        head.Orientation = Orientation.Horizontal
+        label = _text(u'{0}   {1}'.format(title, count))
+        label.FontWeight = FontWeights.Bold
+        label.Margin = Thickness(0, 0, 10, 0)
+        head.Children.Add(label)
+        for caption, show in ((u'On', True), (u'Off', False)):
+            b = Button()
+            b.Content = caption
+            b.Padding = Thickness(7, 0, 7, 0)
+            b.FontSize = 11
+            b.Margin = Thickness(0, 0, 3, 0)
+            b.ToolTip = u'{0} все РБ подгруппы «{1}»'.format(
+                u'Показать' if show else u'Скрыть', title)
+            b.Click += self._section_handler(title, names, show)
+            head.Children.Add(b)
+        exp.Header = head
+        wrap.Margin = Thickness(0, 2, 0, 0)
+        exp.Content = wrap
+        exp.Expanded += self._collapse_handler(title, False)
+        exp.Collapsed += self._collapse_handler(title, True)
+        return exp
+
+    def _section_handler(self, title, names, show):
+        def handler(sender, args):
+            args.Handled = True   # не сворачивать подгруппу
+            self.set_worksets(names, show, u'{0} — {1}'.format(title, u'On' if show else u'Off'))
+        return handler
+
+    def _collapse_handler(self, title, collapsed):
+        def handler(sender, args):
+            if not sender.Equals(args.OriginalSource) or self.search_box.Text:
+                return
+            names = self.profile['collapsed']
+            if collapsed and title not in names:
+                names.append(title)
+            elif not collapsed and title in names:
+                names.remove(title)
+            else:
+                return
+            self.save_profile()
+        return handler
 
     def all_names(self):
         return [w['name'] for w in self.snap['worksets']] if self.snap else []
@@ -1209,26 +1282,29 @@ class CategoryEditor(object):
         return handler
 
     def build_tab(self, kind):
+        card = Border()
+        card.Style = self.win.FindResource('Card')
         dock = DockPanel()
-        dock.Margin = Thickness(4)
         top = StackPanel()
         DockPanel.SetDock(top, Dock.Top)
         search = TextBox()
-        search.Margin = Thickness(0, 0, 0, 4)
+        search.Margin = Thickness(0, 0, 0, 8)
         search.ToolTip = u'Поиск категории'
         search.TextChanged += self._handler(self.render, kind)
-        buttons = WrapPanel()
-        buttons.Margin = Thickness(0, 0, 0, 4)
+        buttons = DockPanel()
+        buttons.Margin = Thickness(0, 0, 0, 8)
+        count = _text(u'', gray=True)
+        DockPanel.SetDock(count, Dock.Right)
+        buttons.Children.Add(count)
+        row = StackPanel()
+        row.Orientation = Orientation.Horizontal
         for caption, value in ((u'Отметить найденные', True), (u'Снять с найденных', False)):
             b = Button()
             b.Content = caption
-            b.Padding = Thickness(6, 2, 6, 2)
-            b.Margin = Thickness(0, 0, 4, 0)
+            b.Margin = Thickness(0, 0, 6, 0)
             b.Click += self._handler(self.set_shown, kind, value)
-            buttons.Children.Add(b)
-        count = _text(u'', gray=True)
-        count.Margin = Thickness(8, 0, 0, 0)
-        buttons.Children.Add(count)
+            row.Children.Add(b)
+        buttons.Children.Add(row)
         top.Children.Add(search)
         top.Children.Add(buttons)
         dock.Children.Add(top)
@@ -1239,9 +1315,10 @@ class CategoryEditor(object):
         listing.Margin = Thickness(2)
         scroll.Content = listing
         dock.Children.Add(scroll)
+        card.Child = dock
         tab = TabItem()
         tab.Header = KIND_TITLES[kind]
-        tab.Content = dock
+        tab.Content = card
         self.parts[kind] = {'search': search, 'list': listing, 'count': count}
         return tab
 
@@ -1508,18 +1585,701 @@ class ColorEditor(object):
         self.win.DialogResult = True
 
 
+def _find_parent(element, cls):
+    """Ближайший предок нужного типа в визуальном дереве (или None)."""
+    while element is not None:
+        if isinstance(element, cls):
+            return element
+        try:
+            element = VisualTreeHelper.GetParent(element)
+        except Exception:
+            return None
+    return None
+
+
+def _icon_button(glyph, tooltip, handler, style):
+    b = Button()
+    b.Style = style
+    b.Content = glyph
+    b.ToolTip = tooltip
+    b.Click += handler
+    return b
+
+
+CHIP_COLORS = {
+    # (фон, рамка, текст)
+    'manual': (_brush('#E8F5E9'), _brush('#A5D6A7'), _brush('#1B5E20')),
+    'auto': (_brush('#F7F9FA'), _brush('#CFD8DC'), _brush('#607D8B')),
+    'missing': (_brush('#F5F5F5'), _brush('#E0E0E0'), _brush('#9E9E9E')),
+}
+CARD_BORDER = _brush('#D5DBE1')
+CARD_SELECTED = _brush('#2E7D32')
+CARD_DROP_BG = _brush('#F1F8F1')
+ZONE_BG = _brush('#FAFBFC')
+ZONE_BORDER = _brush('#B0BEC5')
+DRAG_FORMAT = 'EOM.ViewManager.Worksets'
+
+
+class BucketBoard(object):
+    """Вкладка «Группы» или «Подгруппы»: слева все РБ модели, справа карточки.
+
+    РБ перетаскиваются из списка в карточку (в списке остаются — один РБ может быть
+    в нескольких карточках), между карточками (перенос; с Ctrl — копия) и обратно
+    в список (убрать из карточки). Подгруппы дополнительно могут собирать РБ
+    автоматически — по маске имени или «всё остальное»."""
+
+    def __init__(self, editor, kind):
+        self.ed = editor
+        self.kind = kind                       # 'groups' | 'sections'
+        self.sections = kind == 'sections'
+        self.buckets = editor.sections if self.sections else editor.groups
+        self.word = u'подгруппа' if self.sections else u'группа'
+        self.selected = 0 if self.buckets else None
+        self.cards = []
+        self.left = {}                         # имя РБ -> (ListBoxItem, подпись)
+        self.drag_start = None
+        self.drag_item = None
+        self.pending_select = None
+        self.root = self.build()
+        self.fill_left()
+        self.render()
+
+    # ---------- построение ----------
+    def build(self):
+        grid = Grid()
+        for width in (GridLength(340), GridLength(12), GridLength(1, GridUnitType.Star)):
+            col = ColumnDefinition()
+            col.Width = width
+            grid.ColumnDefinitions.Add(col)
+
+        left = Border()
+        left.Style = self.ed.style('Card')
+        dock = DockPanel()
+        top = StackPanel()
+        DockPanel.SetDock(top, Dock.Top)
+        title = DockPanel()
+        self.left_count = TextBlock()
+        self.left_count.Style = self.ed.style('Hint')
+        self.left_count.VerticalAlignment = VerticalAlignment.Center
+        DockPanel.SetDock(self.left_count, Dock.Right)
+        title.Children.Add(self.left_count)
+        h = TextBlock()
+        h.Text = u'Рабочие наборы модели'
+        h.Style = self.ed.style('H2')
+        title.Children.Add(h)
+        top.Children.Add(title)
+        self.search = TextBox()
+        self.search.Margin = Thickness(0, 8, 0, 6)
+        self.search.ToolTip = u'Поиск по имени рабочего набора'
+        self.search.TextChanged += self.on_filter
+        top.Children.Add(self.search)
+        self.only_free = CheckBox()
+        self.only_free.Margin = Thickness(0, 0, 0, 6)
+        self.only_free.Content = _text(u'Только не разложенные вручную' if self.sections
+                                       else u'Только без группы')
+        self.only_free.Click += self.on_filter
+        top.Children.Add(self.only_free)
+        dock.Children.Add(top)
+        hint = TextBlock()
+        hint.Style = self.ed.style('Hint')
+        hint.Margin = Thickness(0, 8, 0, 0)
+        hint.Text = (u'Перетащите РБ в карточку справа — в списке он останется. Ctrl или Shift — '
+                     u'выбрать несколько. Двойной щелчок — добавить в выделенную карточку.')
+        DockPanel.SetDock(hint, Dock.Bottom)
+        dock.Children.Add(hint)
+        self.listbox = ListBox()
+        self.listbox.SelectionMode = SelectionMode.Extended
+        self.listbox.AllowDrop = True
+        self.listbox.PreviewMouseLeftButtonDown += self.on_list_down
+        self.listbox.PreviewMouseLeftButtonUp += self.on_list_up
+        self.listbox.PreviewMouseMove += self.on_list_move
+        self.listbox.MouseDoubleClick += self.on_list_double
+        self.listbox.DragOver += self.on_list_drag_over
+        self.listbox.Drop += self.on_list_drop
+        dock.Children.Add(self.listbox)
+        left.Child = dock
+        Grid.SetColumn(left, 0)
+        grid.Children.Add(left)
+
+        right = DockPanel()
+        bar = DockPanel()
+        bar.LastChildFill = False
+        bar.Margin = Thickness(0, 0, 0, 8)
+        DockPanel.SetDock(bar, Dock.Top)
+        add = Button()
+        add.Content = u'+  Новая ' + self.word
+        add.Click += self.on_add
+        DockPanel.SetDock(add, Dock.Left)
+        bar.Children.Add(add)
+        if self.sections:
+            reset = Button()
+            reset.Content = u'По умолчанию'
+            reset.ToolTip = u'Вернуть подгруппы 0 — Связи, 1 — Второстепенные, 2 — ЭОМ, Прочие'
+            reset.Click += self.on_reset
+            DockPanel.SetDock(reset, Dock.Right)
+            bar.Children.Add(reset)
+        right.Children.Add(bar)
+        scroll = ScrollViewer()
+        scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        self.cards_panel = StackPanel()
+        self.cards_panel.Margin = Thickness(0, 0, 4, 0)
+        scroll.Content = self.cards_panel
+        right.Children.Add(scroll)
+        Grid.SetColumn(right, 2)
+        grid.Children.Add(right)
+        return grid
+
+    # ---------- список РБ слева ----------
+    def short(self, name):
+        return vm_profile.short_workset_name(name, self.ed.naming)
+
+    def fill_left(self):
+        self.listbox.Items.Clear()
+        self.left = {}
+        for name in self.ed.model_names:
+            item = ListBoxItem()
+            item.Tag = name
+            item.ToolTip = name
+            box = StackPanel()
+            label = _text(self.short(name))
+            tags = _text(u'', gray=True)
+            tags.FontSize = 10.5
+            box.Children.Add(label)
+            box.Children.Add(tags)
+            item.Content = box
+            self.listbox.Items.Add(item)
+            self.left[name] = (item, tags)
+        if not self.ed.model_names:
+            note = ListBoxItem()
+            note.IsEnabled = False
+            note.Content = _text(u'Откройте модель с рабочими наборами.', gray=True)
+            self.listbox.Items.Add(note)
+        self.update_left()
+
+    def members(self):
+        """{индекс карточки: [(имя, 'manual'|'auto'|'missing')]}."""
+        names = self.ed.model_names
+        known = set(names)
+        if self.sections:
+            raw = vm_profile.section_members(names, self.buckets)
+        else:
+            raw = {}
+            for i, g in enumerate(self.buckets):
+                chosen = set(g['worksets'])
+                raw[i] = [(n, 'manual') for n in names if n in chosen]
+        result = {}
+        for i, b in enumerate(self.buckets):
+            part = list(raw.get(i, []))
+            part += [(n, 'missing') for n in b['worksets'] if n not in known]
+            result[i] = part
+        if None in raw:
+            result[None] = raw[None]
+        return result
+
+    def update_left(self):
+        manual, auto = {}, {}
+        for i, part in self.members().items():
+            title = self.buckets[i]['name'] if i is not None else OTHER_SECTION
+            for name, how in part:
+                (manual if how == 'manual' else auto).setdefault(name, []).append(title)
+        query = self.search.Text
+        free_only = bool(self.only_free.IsChecked)
+        shown = 0
+        for name, (item, tags) in self.left.items():
+            if name in manual:
+                tags.Text = (u'вручную: ' if self.sections else u'в: ') + u', '.join(manual[name])
+            elif self.sections and name in auto:
+                tags.Text = u'авто: ' + u', '.join(auto[name])
+            else:
+                tags.Text = u'без группы'
+            visible = _matches(name, query) and not (free_only and name in manual)
+            item.Visibility = Visibility.Visible if visible else Visibility.Collapsed
+            if not visible:
+                item.IsSelected = False
+            shown += 1 if visible else 0
+        self.left_count.Text = u'{0} из {1}'.format(shown, len(self.left))
+
+    def on_filter(self, sender, args):
+        self.update_left()
+
+    def selected_names(self):
+        return [i.Tag for i in self.listbox.SelectedItems if i.Tag]
+
+    def on_list_down(self, sender, args):
+        item = _find_parent(args.OriginalSource, ListBoxItem)
+        # нажатие мимо РБ (полоса прокрутки и т.п.) перетаскивание не начинает
+        self.drag_start = args.GetPosition(None) if item is not None else None
+        self.drag_item = item
+        self.pending_select = None
+        # нажатие на уже выделенный РБ при нескольких выделенных не должно сбрасывать
+        # выделение — иначе нельзя перетащить сразу несколько
+        if (item is not None and item.IsSelected and self.listbox.SelectedItems.Count > 1
+                and Keyboard.Modifiers == MOD_NONE):
+            self.pending_select = item
+            args.Handled = True
+
+    def on_list_up(self, sender, args):
+        if self.pending_select is not None:
+            self.listbox.SelectedItems.Clear()
+            self.pending_select.IsSelected = True
+        self.pending_select = None
+        self.drag_start = None
+
+    def on_list_move(self, sender, args):
+        if self.drag_start is None or args.LeftButton != MouseButtonState.Pressed:
+            return
+        pos = args.GetPosition(None)
+        if (abs(pos.X - self.drag_start.X) < SystemParameters.MinimumHorizontalDragDistance and
+                abs(pos.Y - self.drag_start.Y) < SystemParameters.MinimumVerticalDragDistance):
+            return
+        names = self.selected_names()
+        if not names and self.drag_item is not None and self.drag_item.Tag:
+            names = [self.drag_item.Tag]
+        self.drag_start = None
+        self.pending_select = None
+        if names:
+            self.start_drag(self.listbox, names, None, False)
+
+    def on_list_double(self, sender, args):
+        if _find_parent(args.OriginalSource, ListBoxItem) is None:
+            return
+        names = self.selected_names()
+        if not names:
+            return
+        if self.selected is None or self.selected >= len(self.buckets):
+            self.create(names)
+            return
+        self.add_to(self.selected, names)
+
+    def on_list_drag_over(self, sender, args):
+        d = self.ed.drag
+        ok = d is not None and d['source'] is not None and d['manual']
+        args.Effects = DragDropEffects.Move if ok else DDE_NONE
+        args.Handled = True
+
+    def on_list_drop(self, sender, args):
+        d = self.ed.drag
+        if d is None or d['source'] is None or not d['manual']:
+            return
+        self.remove_from(d['source'], d['names'])
+        args.Handled = True
+
+    # ---------- перетаскивание ----------
+    def start_drag(self, element, names, source, manual):
+        self.ed.drag = {'names': list(names), 'source': source, 'manual': manual}
+        try:
+            DragDrop.DoDragDrop(element, DataObject(DRAG_FORMAT, u'\n'.join(names)),
+                                DragDropEffects.Copy | DragDropEffects.Move)
+        finally:
+            self.ed.drag = None
+
+    def effect(self, args, target):
+        d = self.ed.drag
+        if d is None:
+            return DDE_NONE
+        if d['source'] is None or d['source'] == target:
+            return DragDropEffects.Copy if d['source'] is None else DDE_NONE
+        if d['manual'] and not _ctrl(args):
+            return DragDropEffects.Move
+        return DragDropEffects.Copy
+
+    def dropped(self, args, target):
+        """Положить перетаскиваемые РБ в карточку target (None — новая карточка)."""
+        d = self.ed.drag
+        if d is None:
+            return
+        move = (d['source'] is not None and d['source'] != target and d['manual']
+                and not _ctrl(args))
+        names, source = d['names'], d['source']
+        if target is None:
+            target = self.create(names, render=False)
+            if source is not None and source >= target:
+                source += 1   # новая карточка вставлена выше источника
+        else:
+            self.add_to(target, names, render=False)
+        if move:
+            self.remove_from(source, names, render=False)
+        self.selected = target
+        self.refresh()
+
+    # ---------- изменения ----------
+    def add_to(self, index, names, render=True):
+        chosen = self.buckets[index]['worksets']
+        for n in names:
+            if n not in chosen:
+                chosen.append(n)
+        self.selected = index
+        if render:
+            self.refresh()
+
+    def remove_from(self, index, names, render=True):
+        chosen = self.buckets[index]['worksets']
+        for n in names:
+            if n in chosen:
+                chosen.remove(n)
+        if render:
+            self.refresh()
+
+    def unique_name(self):
+        taken = set(b['name'] for b in self.buckets)
+        base = self.word.capitalize()
+        n = len(self.buckets) + 1
+        while u'{0} {1}'.format(base, n) in taken:
+            n += 1
+        return u'{0} {1}'.format(base, n)
+
+    def create(self, names=None, render=True):
+        if self.sections:
+            bucket = vm_profile.new_section(self.unique_name(), names)
+            # новую подгруппу ставим перед «всем остальным»
+            pos = len(self.buckets)
+            for i, b in enumerate(self.buckets):
+                if b.get('rest'):
+                    pos = i
+                    break
+        else:
+            bucket = {'name': self.unique_name(), 'worksets': list(names or [])}
+            pos = len(self.buckets)
+        self.buckets.insert(pos, bucket)
+        self.selected = pos
+        self.focus_name = True
+        if render:
+            self.refresh()
+        return pos
+
+    def on_add(self, sender, args):
+        self.create()
+
+    def on_reset(self, sender, args):
+        answer = MessageBox.Show(self.ed.win, u'Вернуть подгруппы по умолчанию? Ваши подгруппы '
+                                 u'удалятся.', u'View Manager', MessageBoxButton.YesNo,
+                                 MessageBoxImage.Question)
+        if answer != MessageBoxResult.Yes:
+            return
+        self.buckets[:] = vm_profile.default_sections()
+        self.selected = 0
+        self.refresh()
+
+    def refresh(self):
+        self.render()
+        self.update_left()
+
+    # ---------- карточки ----------
+    def render(self):
+        panel = self.cards_panel
+        panel.Children.Clear()
+        self.cards = []
+        members = self.members()
+        focus = getattr(self, 'focus_name', False)
+        self.focus_name = False
+        for index, bucket in enumerate(self.buckets):
+            card, name_box = self.card(index, bucket, members.get(index, []))
+            panel.Children.Add(card)
+            self.cards.append(card)
+            if focus and index == self.selected:
+                name_box.Loaded += self._focus_handler(name_box)
+        if None in members and members[None]:
+            other = {'name': OTHER_SECTION, 'worksets': [], 'patterns': [], 'hidden': False,
+                     'rest': True}
+            card, _ = self.card(None, other, members[None])
+            panel.Children.Add(card)
+        panel.Children.Add(self.new_zone())
+        self.paint_selection()
+
+    @staticmethod
+    def _focus_handler(box):
+        def handler(sender, args):
+            box.Focus()
+            box.SelectAll()
+        return handler
+
+    def paint_selection(self):
+        for i, card in enumerate(self.cards):
+            card.BorderBrush = CARD_SELECTED if i == self.selected else CARD_BORDER
+
+    def card(self, index, bucket, part):
+        card = Border()
+        card.Style = self.ed.style('Card')
+        card.Margin = Thickness(0, 0, 0, 8)
+        card.Tag = index
+        hidden = self.sections and bucket.get('hidden')
+        if hidden:
+            card.Opacity = 0.6
+        box = StackPanel()
+        header = DockPanel()
+        name_box = None
+        if index is not None:
+            tools = StackPanel()
+            tools.Orientation = Orientation.Horizontal
+            DockPanel.SetDock(tools, Dock.Right)
+            icon = self.ed.style('Icon')
+            if self.sections:
+                tools.Children.Add(_icon_button(
+                    u'' if hidden else u'',
+                    u'Показать на панели' if hidden else u'Скрыть на панели',
+                    self._bucket_handler(self.toggle_hidden, index), icon))
+            up = _icon_button(u'', u'Выше', self._bucket_handler(self.move, index, -1), icon)
+            up.IsEnabled = index > 0
+            down = _icon_button(u'', u'Ниже', self._bucket_handler(self.move, index, 1), icon)
+            down.IsEnabled = index < len(self.buckets) - 1
+            tools.Children.Add(up)
+            tools.Children.Add(down)
+            tools.Children.Add(_icon_button(u'', u'Удалить',
+                                            self._bucket_handler(self.delete, index), icon))
+            header.Children.Add(tools)
+        count = TextBlock()
+        count.Style = self.ed.style('Hint')
+        count.VerticalAlignment = VerticalAlignment.Center
+        count.Margin = Thickness(8, 0, 8, 0)
+        present = sum(1 for _, how in part if how != 'missing')
+        count.Text = u'{0} РБ'.format(present) + (u' · скрыта на панели' if hidden else u'')
+        DockPanel.SetDock(count, Dock.Right)
+        header.Children.Add(count)
+        if index is None:
+            title = _text(bucket['name'])
+            title.FontWeight = FontWeights.SemiBold
+            title.FontSize = 13
+            header.Children.Add(title)
+        else:
+            name_box = TextBox()
+            name_box.Text = bucket['name']
+            name_box.FontWeight = FontWeights.SemiBold
+            name_box.FontSize = 13
+            name_box.BorderThickness = Thickness(0, 0, 0, 1)
+            name_box.Background = Brushes.Transparent
+            name_box.ToolTip = u'Название — можно править'
+            name_box.TextChanged += self._name_handler(index)
+            name_box.LostFocus += self._lost_focus_left
+            header.Children.Add(name_box)
+        box.Children.Add(header)
+        if self.sections:
+            box.Children.Add(self.auto_row(index, bucket))
+        chips = WrapPanel()
+        chips.Margin = Thickness(0, 8, 0, 0)
+        for name, how in part:
+            chips.Children.Add(self.chip(index, name, how))
+        if not part:
+            empty = _text(u'Перетащите сюда рабочие наборы из списка слева', gray=True)
+            empty.FontSize = 11
+            chips.Children.Add(empty)
+        box.Children.Add(chips)
+        card.Child = box
+        if index is not None:
+            card.AllowDrop = True
+            card.PreviewMouseLeftButtonDown += self._bucket_handler(self.select, index)
+            card.DragEnter += self._drag_over(index, card)
+            card.DragOver += self._drag_over(index, card)
+            card.DragLeave += self._drag_leave(card)
+            card.Drop += self._drop(index, card)
+        return card, name_box
+
+    def auto_row(self, index, bucket):
+        if bucket.get('rest'):
+            note = TextBlock()
+            note.Style = self.ed.style('Hint')
+            note.Margin = Thickness(0, 4, 0, 0)
+            note.Text = u'Сюда сами попадают РБ, которые не попали ни в одну другую подгруппу.'
+            return note
+        row = DockPanel()
+        row.Margin = Thickness(0, 4, 0, 0)
+        label = TextBlock()
+        label.Style = self.ed.style('Hint')
+        label.Text = u'Ещё автоматически, по началу имени:'
+        label.VerticalAlignment = VerticalAlignment.Center
+        label.Margin = Thickness(0, 0, 6, 0)
+        DockPanel.SetDock(label, Dock.Left)
+        row.Children.Add(label)
+        box = TextBox()
+        box.FontSize = 11
+        box.Padding = Thickness(3, 1, 3, 1)
+        box.Text = u'; '.join(bucket['patterns'])
+        box.ToolTip = (u'Необязательно. Например 0_* — все РБ, имя которых начинается с «0_». '
+                       u'Несколько — через «;». РБ, перетащенные вручную, сюда не попадают.')
+        box.LostFocus += self._patterns_handler(index)
+        row.Children.Add(box)
+        return row
+
+    def chip(self, index, name, how):
+        bg, border, fg = CHIP_COLORS[how]
+        chip = Border()
+        chip.Background = bg
+        chip.BorderBrush = border
+        chip.BorderThickness = Thickness(1)
+        chip.CornerRadius = CornerRadius(3)
+        chip.Padding = Thickness(7, 2, 2 if how != 'auto' else 7, 2)
+        chip.Margin = Thickness(0, 0, 4, 4)
+        chip.Cursor = Cursors.SizeAll
+        row = StackPanel()
+        row.Orientation = Orientation.Horizontal
+        label = _text(self.short(name) + (u'  — нет в модели' if how == 'missing' else u''))
+        label.Foreground = fg
+        label.FontSize = 11.5
+        if how == 'auto':
+            label.FontStyle = FontStyles.Italic
+        row.Children.Add(label)
+        if how == 'auto':
+            chip.ToolTip = (u'{0}\nПопал автоматически. Перетащите в другую подгруппу, '
+                            u'чтобы перенести.'.format(name))
+        else:
+            chip.ToolTip = name
+            remove = Button()
+            remove.Style = self.ed.style('Icon')
+            remove.Width = remove.Height = 18
+            remove.FontSize = 8
+            remove.Margin = Thickness(4, 0, 0, 0)
+            remove.Content = u''
+            remove.ToolTip = u'Убрать из карточки'
+            remove.Click += self._chip_remove(index, name)
+            row.Children.Add(remove)
+        chip.Child = row
+        if index is not None and how != 'missing':
+            chip.PreviewMouseLeftButtonDown += self._chip_down
+            chip.PreviewMouseMove += self._chip_move(index, name, how == 'manual')
+        elif index is None:
+            chip.PreviewMouseLeftButtonDown += self._chip_down
+            chip.PreviewMouseMove += self._chip_move(None, name, False)
+        return chip
+
+    def new_zone(self):
+        zone = Border()
+        zone.Tag = 'zone'
+        zone.BorderBrush = ZONE_BORDER
+        zone.BorderThickness = Thickness(1)
+        zone.CornerRadius = CornerRadius(6)
+        zone.Background = ZONE_BG
+        zone.Padding = Thickness(14)
+        zone.Margin = Thickness(0, 0, 0, 8)
+        zone.Cursor = Cursors.Hand
+        zone.AllowDrop = True
+        text = _text(u'+  Перетащите сюда — будет новая ' + self.word, gray=True)
+        text.HorizontalAlignment = HorizontalAlignment.Center
+        zone.Child = text
+        zone.MouseLeftButtonUp += self._new_zone_click
+        zone.DragEnter += self._drag_over(None, zone)
+        zone.DragOver += self._drag_over(None, zone)
+        zone.DragLeave += self._drag_leave(zone)
+        zone.Drop += self._drop(None, zone)
+        return zone
+
+    # ---------- обработчики карточек ----------
+    def _bucket_handler(self, func, *bound):
+        def handler(sender, args):
+            func(*bound)
+        return handler
+
+    def select(self, index):
+        if self.selected != index:
+            self.selected = index
+            self.paint_selection()
+
+    def toggle_hidden(self, index):
+        b = self.buckets[index]
+        b['hidden'] = not b.get('hidden')
+        self.render()
+
+    def move(self, index, delta):
+        j = index + delta
+        if not (0 <= j < len(self.buckets)):
+            return
+        self.buckets[index], self.buckets[j] = self.buckets[j], self.buckets[index]
+        self.selected = j
+        self.refresh()
+
+    def delete(self, index):
+        name = self.buckets[index]['name']
+        answer = MessageBox.Show(self.ed.win, u'Удалить {0} «{1}»? Рабочие наборы останутся в '
+                                 u'модели.'.format(self.word, name), u'View Manager',
+                                 MessageBoxButton.YesNo, MessageBoxImage.Question)
+        if answer != MessageBoxResult.Yes:
+            return
+        del self.buckets[index]
+        self.selected = min(index, len(self.buckets) - 1) if self.buckets else None
+        self.refresh()
+
+    def _name_handler(self, index):
+        def handler(sender, args):
+            if index < len(self.buckets):
+                self.buckets[index]['name'] = sender.Text
+        return handler
+
+    def _lost_focus_left(self, sender, args):
+        self.update_left()
+
+    def _patterns_handler(self, index):
+        def handler(sender, args):
+            parts = [p.strip() for p in re.split(u'[;\n]', sender.Text or u'')]
+            patterns = []
+            for p in parts:
+                if p and p not in patterns:
+                    patterns.append(p)
+            if patterns != self.buckets[index]['patterns']:
+                self.buckets[index]['patterns'] = patterns
+                self.refresh()
+        return handler
+
+    def _chip_remove(self, index, name):
+        def handler(sender, args):
+            self.remove_from(index, [name])
+        return handler
+
+    def _chip_down(self, sender, args):
+        self.drag_start = args.GetPosition(None)
+
+    def _chip_move(self, index, name, manual):
+        def handler(sender, args):
+            if self.drag_start is None or args.LeftButton != MouseButtonState.Pressed:
+                return
+            pos = args.GetPosition(None)
+            if (abs(pos.X - self.drag_start.X) < SystemParameters.MinimumHorizontalDragDistance
+                    and abs(pos.Y - self.drag_start.Y) < SystemParameters.MinimumVerticalDragDistance):
+                return
+            self.drag_start = None
+            self.start_drag(sender, [name], index, manual)
+        return handler
+
+    def _drag_over(self, index, element):
+        def handler(sender, args):
+            effect = self.effect(args, index)
+            args.Effects = effect
+            if effect != DDE_NONE:
+                element.Background = CARD_DROP_BG
+                if index is not None:
+                    element.BorderBrush = CARD_SELECTED
+            args.Handled = True
+        return handler
+
+    def _drag_leave(self, element):
+        def handler(sender, args):
+            self.unpaint(element)
+        return handler
+
+    def unpaint(self, element):
+        element.Background = ZONE_BG if element.Tag == 'zone' else Brushes.White
+        if element.Tag == 'zone':
+            element.BorderBrush = ZONE_BORDER
+        self.paint_selection()
+
+    def _drop(self, index, element):
+        def handler(sender, args):
+            args.Handled = True
+            if self.effect(args, index) == DDE_NONE:
+                self.unpaint(element)
+                return
+            self.dropped(args, index)
+        return handler
+
+    def _new_zone_click(self, sender, args):
+        self.create()
+
+
 class GroupEditor(object):
-    """Модальное окно: список групп, название, состав рабочих наборов."""
+    """Окно настройки рабочих наборов: группы, подгруппы (перетаскиванием) и наименование."""
 
-    NAMES = ('groups_list', 'add_button', 'delete_button', 'up_button', 'down_button',
-             'name_box', 'count_label', 'search_box', 'check_shown_button',
-             'uncheck_shown_button', 'worksets_panel', 'ok_button',
-             'rules_panel', 'preview_panel', 'add_rule_button',
-             'sec_list', 'sec_add_button', 'sec_delete_button', 'sec_up_button', 'sec_down_button',
-             'sec_reset_button', 'sec_name_box', 'sec_hidden_box', 'sec_patterns_box',
-             'sec_count_label', 'sec_preview_panel')
+    NAMES = ('tabs', 'groups_tab', 'sections_tab', 'ok_button', 'footer_hint',
+             'rules_panel', 'preview_panel', 'add_rule_button')
 
-    def __init__(self, model_names, groups, naming, sections, owner_hwnd):
+    def __init__(self, model_names, groups, naming, sections, owner_hwnd, tab=0):
         self.win = _load_xaml('vm_groups.xaml')
         for name in self.NAMES:
             setattr(self, name, self.win.FindName(name))
@@ -1528,296 +2288,25 @@ class GroupEditor(object):
         self.groups = copy.deepcopy(groups)
         self.naming = copy.deepcopy(naming)
         self.sections = copy.deepcopy(sections)
-        self.current = None
-        self.loading = False
-        self.sec_current = None
-        self.sec_loading = False
+        self.drag = None
         self.result = None
+        self.footer_hint.Text = (u'Группы и подгруппы хранятся по именам РБ в вашем профиле — '
+                                 u'в других проектах с такими же РБ они тоже сработают.')
+        self.groups_board = BucketBoard(self, 'groups')
+        self.groups_tab.Content = self.groups_board.root
+        self.sections_board = BucketBoard(self, 'sections')
+        self.sections_tab.Content = self.sections_board.root
         self.add_rule_button.Click += self.on_add_rule
         self.render_rules()
-        self.sec_list.SelectionChanged += self.on_sec_select
-        self.sec_name_box.TextChanged += self.on_sec_name
-        self.sec_hidden_box.Click += self.on_sec_hidden
-        self.sec_patterns_box.TextChanged += self.on_sec_patterns
-        self.sec_add_button.Click += self.on_sec_add
-        self.sec_delete_button.Click += self.on_sec_delete
-        self.sec_up_button.Click += self._sec_move(-1)
-        self.sec_down_button.Click += self._sec_move(1)
-        self.sec_reset_button.Click += self.on_sec_reset
-        self.sec_fill(0 if self.sections else -1)
-        self.groups_list.SelectionChanged += self.on_select
-        self.name_box.TextChanged += self.on_name
-        self.search_box.TextChanged += self.on_search
-        self.add_button.Click += self.on_add
-        self.delete_button.Click += self.on_delete
-        self.up_button.Click += self.on_up
-        self.down_button.Click += self.on_down
-        self.check_shown_button.Click += self.on_check_shown
-        self.uncheck_shown_button.Click += self.on_uncheck_shown
         self.ok_button.Click += self.on_ok
-        self.fill_list(0 if self.groups else -1)
+        self.tabs.SelectedIndex = tab
+
+    def style(self, key):
+        return self.win.FindResource(key)
 
     def show(self):
         self.win.ShowDialog()
         return self.result
-
-    # ---------- список групп ----------
-    def fill_list(self, select):
-        self.loading = True
-        self.groups_list.Items.Clear()
-        for group in self.groups:
-            self.groups_list.Items.Add(group['name'])
-        self.groups_list.SelectedIndex = select
-        self.loading = False
-        self.load_group()
-
-    def on_select(self, sender, args):
-        if not self.loading:
-            self.load_group()
-
-    def load_group(self):
-        index = self.groups_list.SelectedIndex
-        self.current = index if index >= 0 else None
-        has = self.current is not None
-        self.loading = True
-        self.name_box.Text = self.groups[index]['name'] if has else u''
-        self.loading = False
-        for ctl in (self.name_box, self.search_box, self.check_shown_button,
-                    self.uncheck_shown_button, self.worksets_panel, self.delete_button,
-                    self.up_button, self.down_button):
-            ctl.IsEnabled = has
-        self.render_worksets()
-
-    def unique_name(self):
-        taken = set(g['name'] for g in self.groups)
-        n = len(self.groups) + 1
-        while u'Группа {0}'.format(n) in taken:
-            n += 1
-        return u'Группа {0}'.format(n)
-
-    def on_add(self, sender, args):
-        self.groups.append({'name': self.unique_name(), 'worksets': []})
-        self.fill_list(len(self.groups) - 1)
-        self.name_box.Focus()
-        self.name_box.SelectAll()
-
-    def on_delete(self, sender, args):
-        if self.current is None:
-            return
-        name = self.groups[self.current]['name']
-        answer = MessageBox.Show(self.win, u'Удалить группу «{0}»?'.format(name), u'View Manager',
-                                 MessageBoxButton.YesNo, MessageBoxImage.Question)
-        if answer != MessageBoxResult.Yes:
-            return
-        index = self.current
-        del self.groups[index]
-        self.fill_list(min(index, len(self.groups) - 1))
-
-    def move(self, delta):
-        i = self.current
-        if i is None or not (0 <= i + delta < len(self.groups)):
-            return
-        self.groups[i], self.groups[i + delta] = self.groups[i + delta], self.groups[i]
-        self.fill_list(i + delta)
-
-    def on_up(self, sender, args):
-        self.move(-1)
-
-    def on_down(self, sender, args):
-        self.move(1)
-
-    def on_name(self, sender, args):
-        if self.loading or self.current is None:
-            return
-        name = self.name_box.Text.strip() or u'Без названия'
-        self.groups[self.current]['name'] = name
-        index = self.current
-        self.loading = True
-        self.groups_list.Items.RemoveAt(index)
-        self.groups_list.Items.Insert(index, name)
-        self.groups_list.SelectedIndex = index
-        self.loading = False
-
-    # ---------- состав группы ----------
-    def render_worksets(self):
-        panel = self.worksets_panel
-        panel.Children.Clear()
-        if self.current is None:
-            self.count_label.Text = u''
-            return
-        chosen = self.groups[self.current]['worksets']
-        missing = [n for n in chosen if n not in self.model_names]
-        query = self.search_box.Text
-        for name in self.model_names + missing:
-            if not _matches(name, query):
-                continue
-            cb = CheckBox()
-            cb.Tag = name
-            cb.IsChecked = name in chosen
-            cb.Margin = Thickness(0, 2, 0, 2)
-            if name in missing:
-                cb.Content = _text(name + u'  — нет в этой модели', gray=True)
-            else:
-                cb.Content = _text(name)
-            cb.Click += self.on_check
-            panel.Children.Add(cb)
-        self.update_count()
-
-    def update_count(self):
-        if self.current is not None:
-            self.count_label.Text = u'выбрано: {0}'.format(len(self.groups[self.current]['worksets']))
-
-    def set_chosen(self, name, on):
-        chosen = self.groups[self.current]['worksets']
-        if on and name not in chosen:
-            chosen.append(name)
-        elif not on and name in chosen:
-            chosen.remove(name)
-
-    def on_check(self, sender, args):
-        if self.current is None:
-            return
-        self.set_chosen(sender.Tag, bool(sender.IsChecked))
-        self.update_count()
-
-    def set_shown(self, on):
-        if self.current is None:
-            return
-        for cb in self.worksets_panel.Children:
-            cb.IsChecked = on
-            self.set_chosen(cb.Tag, on)
-        self.update_count()
-
-    def on_check_shown(self, sender, args):
-        self.set_shown(True)
-
-    def on_uncheck_shown(self, sender, args):
-        self.set_shown(False)
-
-    def on_search(self, sender, args):
-        self.render_worksets()
-
-    # ---------- подгруппы списка РБ ----------
-    @staticmethod
-    def _sec_caption(section):
-        return section['name'] + (u'   (скрыта)' if section['hidden'] else u'')
-
-    def sec_fill(self, select):
-        self.sec_loading = True
-        self.sec_list.Items.Clear()
-        for s in self.sections:
-            self.sec_list.Items.Add(self._sec_caption(s))
-        self.sec_list.SelectedIndex = select
-        self.sec_loading = False
-        self.sec_load()
-
-    def on_sec_select(self, sender, args):
-        if not self.sec_loading:
-            self.sec_load()
-
-    def sec_load(self):
-        index = self.sec_list.SelectedIndex
-        self.sec_current = index if index >= 0 else None
-        has = self.sec_current is not None
-        self.sec_loading = True
-        s = self.sections[index] if has else None
-        self.sec_name_box.Text = s['name'] if has else u''
-        self.sec_hidden_box.IsChecked = bool(has and s['hidden'])
-        self.sec_patterns_box.Text = u'\r\n'.join(s['patterns']) if has else u''
-        self.sec_loading = False
-        for ctl in (self.sec_name_box, self.sec_hidden_box, self.sec_patterns_box,
-                    self.sec_delete_button, self.sec_up_button, self.sec_down_button):
-            ctl.IsEnabled = has
-        self.sec_preview()
-
-    def sec_update_caption(self):
-        index = self.sec_current
-        self.sec_loading = True
-        self.sec_list.Items.RemoveAt(index)
-        self.sec_list.Items.Insert(index, self._sec_caption(self.sections[index]))
-        self.sec_list.SelectedIndex = index
-        self.sec_loading = False
-
-    def on_sec_name(self, sender, args):
-        if self.sec_loading or self.sec_current is None:
-            return
-        self.sections[self.sec_current]['name'] = self.sec_name_box.Text.strip() or u'Без названия'
-        self.sec_update_caption()
-
-    def on_sec_hidden(self, sender, args):
-        if self.sec_current is None:
-            return
-        self.sections[self.sec_current]['hidden'] = bool(self.sec_hidden_box.IsChecked)
-        self.sec_update_caption()
-
-    def on_sec_patterns(self, sender, args):
-        if self.sec_loading or self.sec_current is None:
-            return
-        lines = [l.strip() for l in (self.sec_patterns_box.Text or u'').splitlines()]
-        patterns = []
-        for l in lines:
-            if l and l not in patterns:
-                patterns.append(l)
-        self.sections[self.sec_current]['patterns'] = patterns
-        self.sec_preview()
-
-    def on_sec_add(self, sender, args):
-        taken = set(s['name'] for s in self.sections)
-        n = 1
-        while u'Подгруппа {0}'.format(n) in taken:
-            n += 1
-        # новую ставим перед «всем остальным», чтобы она была видна в общем порядке
-        pos = len(self.sections)
-        for i, s in enumerate(self.sections):
-            if not s['patterns']:
-                pos = i
-                break
-        self.sections.insert(pos, {'name': u'Подгруппа {0}'.format(n), 'patterns': [],
-                                   'hidden': False})
-        self.sec_fill(pos)
-        self.sec_name_box.Focus()
-        self.sec_name_box.SelectAll()
-
-    def on_sec_delete(self, sender, args):
-        if self.sec_current is None:
-            return
-        index = self.sec_current
-        del self.sections[index]
-        self.sec_fill(min(index, len(self.sections) - 1))
-
-    def _sec_move(self, delta):
-        def handler(sender, args):
-            i = self.sec_current
-            if i is None or not (0 <= i + delta < len(self.sections)):
-                return
-            self.sections[i], self.sections[i + delta] = self.sections[i + delta], self.sections[i]
-            self.sec_fill(i + delta)
-        return handler
-
-    def on_sec_reset(self, sender, args):
-        answer = MessageBox.Show(self.win, u'Вернуть подгруппы по умолчанию? Ваши подгруппы удалятся.',
-                                 u'View Manager', MessageBoxButton.YesNo, MessageBoxImage.Question)
-        if answer != MessageBoxResult.Yes:
-            return
-        self.sections = vm_profile.default_sections()
-        self.sec_fill(0)
-
-    def sec_preview(self):
-        panel = self.sec_preview_panel
-        panel.Children.Clear()
-        if self.sec_current is None:
-            self.sec_count_label.Text = u'РБ этой модели в подгруппе'
-            return
-        names = [n for n in self.model_names
-                 if vm_profile.section_index(n, self.sections) == self.sec_current]
-        self.sec_count_label.Text = u'РБ этой модели в подгруппе: {0}'.format(len(names))
-        for n in names:
-            panel.Children.Add(_text(n))
-        if not self.model_names:
-            panel.Children.Add(_text(u'Откройте модель с рабочими наборами, чтобы увидеть состав.',
-                                     gray=True))
-        elif not names:
-            panel.Children.Add(_text(u'Ни один РБ этой модели сюда не попадает.', gray=True))
 
     # ---------- наименование РБ ----------
     def render_rules(self):
@@ -1825,8 +2314,8 @@ class GroupEditor(object):
         panel.Children.Clear()
         for index, rule in enumerate(self.naming['rules']):
             row = Grid()
-            row.Margin = Thickness(0, 0, 0, 4)
-            for width in (GridLength(1, GridUnitType.Star), GridLength(18),
+            row.Margin = Thickness(0, 0, 0, 6)
+            for width in (GridLength(1, GridUnitType.Star), GridLength(22),
                           GridLength(1, GridUnitType.Star), GridLength(30)):
                 col = ColumnDefinition()
                 col.Width = width
@@ -1834,22 +2323,20 @@ class GroupEditor(object):
             find = TextBox()
             find.Text = rule['find']
             find.TextChanged += self._rule_handler(index, 'find')
-            arrow = _text(u'→')
+            arrow = _text(u'→', gray=True)
             arrow.HorizontalAlignment = HorizontalAlignment.Center
             repl = TextBox()
             repl.Text = rule['replace']
             repl.TextChanged += self._rule_handler(index, 'replace')
-            remove = Button()
-            remove.Content = u'✕'
-            remove.ToolTip = u'Удалить правило'
+            remove = _icon_button(u'', u'Удалить правило', self._remove_handler(index),
+                                  self.style('Icon'))
             remove.Margin = Thickness(4, 0, 0, 0)
-            remove.Click += self._remove_handler(index)
             for col, ctl in enumerate((find, arrow, repl, remove)):
                 Grid.SetColumn(ctl, col)
                 row.Children.Add(ctl)
             panel.Children.Add(row)
         if not self.naming['rules']:
-            panel.Children.Add(_text(u'Правил нет. Пример: найти «Связи » → заменить на пусто.',
+            panel.Children.Add(_text(u'Правил нет. Пример: найти «0_Связи » → заменить на пусто.',
                                      gray=True))
         self.render_preview()
 
@@ -1878,7 +2365,7 @@ class GroupEditor(object):
         for name in self.model_names:
             short = vm_profile.short_workset_name(name, naming)
             row = TextBlock()
-            row.Margin = Thickness(0, 1, 0, 1)
+            row.Margin = Thickness(0, 2, 0, 2)
             row.TextTrimming = TextTrimming.CharacterEllipsis
             old = Run(name + u'  →  ')
             old.Foreground = TEXT_GRAY
@@ -1892,10 +2379,11 @@ class GroupEditor(object):
                                      gray=True))
 
     def on_ok(self, sender, args):
-        # порядок наборов в группе — как в модели, отсутствующие в конце
+        # порядок наборов — как в модели, отсутствующие в конце
         order = dict((n, i) for i, n in enumerate(self.model_names))
-        for group in self.groups:
-            group['worksets'].sort(key=lambda n: (order.get(n, len(order)), n.lower()))
+        for bucket in self.groups + self.sections:
+            bucket['name'] = (bucket['name'] or u'').strip() or u'Без названия'
+            bucket['worksets'].sort(key=lambda n: (order.get(n, len(order)), n.lower()))
         self.naming['rules'] = [r for r in self.naming['rules'] if r['find']]
         self.result = (self.groups, self.naming, self.sections)
         self.win.DialogResult = True
