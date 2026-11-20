@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 
-__title__ = u"Оси и уровни\nКФП"
+__title__ = u"Координация\nс КФП"
 __doc__ = (
     u"Сравнивает уровни и оси модели с уровнями и осями связи КФП и "
     u"показывает список расхождений: другая отметка, смещённая или "
     u"повёрнутая ось, другое имя, нет в модели / нет в связи. Модель не "
-    u"меняет.\n\n"
-    u"Shift+клик — настройки (слово в имени связи, допуск)."
+    u"меняет. Уровни КР в связи пропускаются.\n\n"
+    u"Shift+клик — выбор связи, допуск и маркер исключаемых уровней."
 )
 __author__ = "Pipers"
 
@@ -19,7 +19,7 @@ from eomtools import link_datums, link_datums_core, link_datums_settings, select
 from eomtools.link_datums_core import OK, format_angle, format_mm
 
 doc = revit.doc
-TITLE = tr(u"Оси и уровни КФП")
+TITLE = tr(u"Координация с КФП")
 
 
 def pick_link(keyword):
@@ -111,17 +111,20 @@ def main():
     tolerance = settings.get("tolerance_mm")
     if tolerance is None:
         tolerance = 1.0
+    marker = (settings["excluded_level_marker"] or u"").strip()
 
     link = pick_link(keyword)
-    levels, grids = link_datums.compare(doc, link, float(tolerance))
+    levels, grids = link_datums.compare(doc, link, float(tolerance), marker)
 
     output = script.get_output()
-    output.print_md(tr(u"# Оси и уровни: модель ↔ связь"))
+    output.print_md(u"# {}".format(TITLE))
     output.print_md(
         tr(u"Связь: **{}** · допуск {} мм · отметки — от базовой точки проекта "
         u"модели. Ссылки в столбце «В модели» выделяют элемент; в «В связи» — "
         u"ID в связанном файле.").format(
             _cell(link_datums.link_label(link)), format_mm(tolerance, 1)))
+    if marker:
+        output.print_md(tr(u"Уровни связи с маркером «{}» исключены из проверки.").format(_cell(marker)))
     report_levels(output, levels)
     report_grids(output, grids)
 

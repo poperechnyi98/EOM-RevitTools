@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 u"""
 Уровни и оси модели и связи (КФП) — сбор из Revit для кнопки
-`Tools.panel/CompareLinkDatums` («Оси и уровни КФП»). Сравнение — в
-link_datums_core (без Revit API).
+«Координация с КФП». Сравнение — в link_datums_core (без Revit API).
 
 Координаты связи переводятся в систему модели через GetTotalTransform()
 экземпляра связи, поэтому сравнивается то, что видно в модели: связь,
@@ -119,14 +118,14 @@ def collect_grids(source_doc, transform):
     return result
 
 
-def compare(doc, link, tolerance_mm):
+def compare(doc, link, tolerance_mm, excluded_link_marker=link_datums_core.DEFAULT_EXCLUDED_LEVEL_MARKER):
     u"""(строки уровней, строки осей) — модель против связи link."""
     link_doc = link.GetLinkDocument()
     transform = link.GetTotalTransform()
     base_z = _base_z(doc)
     levels = link_datums_core.compare_levels(
         collect_levels(doc, None, base_z), collect_levels(link_doc, transform, base_z),
-        tolerance_mm)
+        tolerance_mm, excluded_link_marker)
     grids = link_datums_core.compare_grids(
         collect_grids(doc, None), collect_grids(link_doc, transform), tolerance_mm)
     return levels, grids

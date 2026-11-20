@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 u"""
 Сравнение уровней и осей модели с уровнями и осями связи (КФП) — часть без
-Revit API (кнопка `Tools.panel/CompareLinkDatums`, «Оси и уровни КФП»).
+Revit API (кнопка «Координация с КФП»).
 
 На вход — обычные словари (координаты уже в системе модели, в мм):
   уровень: {"name", "elevation", "id"}
@@ -16,8 +16,11 @@ Revit API (кнопка `Tools.panel/CompareLinkDatums`, «Оси и уровн�
 """
 
 import math
-from eomtools.i18n import N_, tr
 import re
+
+from eomtools.i18n import N_, tr
+
+DEFAULT_EXCLUDED_LEVEL_MARKER = u"КР"
 
 # Статусы строк отчёта (порядок — порядок сортировки «сначала проблемы»).
 OK = u"ok"
@@ -209,8 +212,13 @@ def _compare(models, links, deviation, tolerance):
     return rows
 
 
-def compare_levels(model_levels, link_levels, tolerance=1.0):
+def compare_levels(model_levels, link_levels, tolerance=1.0, excluded_link_marker=u""):
     u"""Строки сравнения уровней, по отметке снизу вверх."""
+    marker = loose_name(excluded_link_marker)
+    if marker:
+        # Число или разделитель могут примыкать к маркеру, соседняя буква — нет.
+        pattern = re.compile(u"(?<![^\\W\\d_]){}(?![^\\W\\d_])".format(re.escape(marker)))
+        link_levels = [level for level in link_levels if not pattern.search(loose_name(level.get("name")))]
     rows = _compare(model_levels, link_levels, level_deviation, tolerance)
 
     def elevation(row):

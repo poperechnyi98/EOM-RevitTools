@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Настройки кнопки «Оси и уровни КФП» (Tools.panel/CompareLinkDatums):
-по какому слову в имени искать связь КФП и допуск сравнения.
+Настройки кнопки «Координация с КФП»: выбор связи, допуск сравнения
+и маркер уровней КР.
 
 Хранится в %APPDATA%\\pyRevit\\EOMLinkDatums_settings.json через
 settings_core.TextSettings (Shift+клик по кнопке).
 """
 
 from eomtools import settings_core
+from eomtools.link_datums_core import DEFAULT_EXCLUDED_LEVEL_MARKER
 
 
 SETTINGS = settings_core.TextSettings(
     file_name="EOMLinkDatums_settings.json",
-    button_name=u"Оси и уровни КФП",
-    heading=u"Сравнение осей и уровней со связью",
+    button_name=u"Координация с КФП",
+    heading=u"Координация с КФП",
     transfer_label=u"сравнения осей и уровней",
     fields=[
         settings_core.TextField(
@@ -37,8 +38,16 @@ SETTINGS = settings_core.TextSettings(
             ),
             default=1.0, minimum=0.0,
         ),
+        settings_core.TextField(
+            "excluded_level_marker",
+            u"③ Исключение уровней",
+            u"Маркер в имени уровня связи",
+            hint=(u"Уровни КФП с этим маркером пропускаются. Например, «КР» "
+                  u"подходит для «КР_Этаж 01» и «КР01». Пусто — проверять все уровни."),
+            default=DEFAULT_EXCLUDED_LEVEL_MARKER,
+        ),
     ],
-    width=640, height=400,
+    width=640, height=480,
 )
 
 load_saved_values = SETTINGS.load_saved_values
