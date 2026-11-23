@@ -1,0 +1,7 @@
+title: "Коорд. виды\nна связях"
+tooltip: |
+  Настройка отображения загруженных Revit-связей по координационным видам
+  на активном виде. Поиск связей и видов, группы, цвета, импорт и экспорт профиля.
+author: EOM Lab; core adapted from LowLife (MIT)
+min_revit_version: 2024
+context: zero-doc
