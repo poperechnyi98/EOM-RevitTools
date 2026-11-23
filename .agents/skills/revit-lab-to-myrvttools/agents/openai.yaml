@@ -1,0 +1,4 @@
+interface:
+  display_name: "Перенос из EOM Lab в MyRvtTools"
+  short_description: "Перенос и выпуск кнопок EOM Lab в MyRvtTools"
+  default_prompt: "Используй $revit-lab-to-myrvttools, чтобы перенести выбранную команду из EOM Lab и выпустить её в MyRvtTools."

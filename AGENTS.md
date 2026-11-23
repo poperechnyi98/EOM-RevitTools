@@ -7,6 +7,7 @@ This is a pyRevit extension for Autodesk Revit, distributed from GitHub (`popere
 - Do not change the Revit model without a clear user request. First commands should be read-only or provide an explicit confirmation.
 - Keep each command in its own `.pushbutton` bundle, include a brief `bundle.yaml` description, and report errors clearly.
 - The user tests all changes in Revit after pyRevit Reload, preferably on a copy of the model.
+- For any transfer, update, or release of a pyRevit command from EOM Lab to MyRvtTools, use the `revit-lab-to-myrvttools` skill. If it is not listed, read and follow `.agents/skills/revit-lab-to-myrvttools/SKILL.md` in this repository before changing the command.
 
 ## Repository layout and distribution
 
