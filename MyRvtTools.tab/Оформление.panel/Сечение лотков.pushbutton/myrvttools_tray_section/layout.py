@@ -7,7 +7,7 @@ from math import sqrt
 from .section_data import TRAY_THICKNESS
 
 
-class PlacedCable(namedtuple('PlacedCable', 'cable x y position group_repeat')):
+class PlacedCable(namedtuple('PlacedCable', 'cable x y position group_repeat role')):
     __slots__ = ()
 
     @property
@@ -20,19 +20,27 @@ Group = namedtuple('Group', 'method cable_class cables')
 _TIER_COUNTS = ((), (1,), (2,), (2, 1), (2, 2), (3, 2), (3, 2, 1),
                 (3, 2, 2), (3, 3, 2), (4, 3, 2))
 _EPSILON = 1e-9
+_CABLE_LINE_COLORS = {'phase': (0, 0, 0), 'N': (0, 0, 255), 'PE': (0, 128, 0)}
+_FIRE_RESISTANT_COLOR = (255, 0, 0)
+
+
+def cable_line_color(item, is_fire_resistant):
+    if is_fire_resistant:
+        return _FIRE_RESISTANT_COLOR
+    return _CABLE_LINE_COLORS.get(item.role)
 
 
 def _single_core_line(cable, count):
     d = cable.diameter
     radius = d / 2.0
     top = radius + sqrt(3.0) * radius
-    phases = [PlacedCable(cable, radius, radius, None, None),
-              PlacedCable(cable, d, top, None, None),
-              PlacedCable(cable, radius + d, radius, None, None)]
+    phases = [PlacedCable(cable, radius, radius, None, None, 'phase'),
+              PlacedCable(cable, d, top, None, None, 'phase'),
+              PlacedCable(cable, radius + d, radius, None, None, 'phase')]
     if count >= 4:
-        phases.append(PlacedCable(cable, radius + 2.0 * d, radius, None, None))
+        phases.append(PlacedCable(cable, radius + 2.0 * d, radius, None, None, 'N'))
     if count == 5:
-        phases.append(PlacedCable(cable, 2.0 * d, top, None, None))
+        phases.append(PlacedCable(cable, 2.0 * d, top, None, None, 'PE'))
     return phases
 
 
@@ -76,7 +84,7 @@ def _bundle(cables):
                     y = max(y, support.y + _tangent_offset(minimum, delta))
             if previous_row:
                 y = max(y, max(support.y for support in previous_row))
-            row.append(PlacedCable(cable, x, y, None, None))
+            row.append(PlacedCable(cable, x, y, None, None, None))
             left += cable.diameter
         placed.extend(row)
         previous_row = row
@@ -103,7 +111,7 @@ def _groups(section):
             for cable in line.cables:
                 radius = cable.diameter / 2.0
                 for _ in range(line.cable_count):
-                    placed = PlacedCable(cable, radius, radius, u'{}'.format(position), None)
+                    placed = PlacedCable(cable, radius, radius, u'{}'.format(position), None, None)
                     yield Group(line.method, 2, [placed])
                     position += 1
     for bundle in section.bundles:
@@ -157,17 +165,20 @@ def plan_layout(section):
                   max(0.0, height - inner_height))
 
 
-def tray_outline(section):
+def tray_region_boundaries(section):
     width, height = section.width, section.height
     wall = TRAY_THICKNESS
-    vertices = [(0.0, height), (0.0, 0.0), (width, 0.0), (width, height),
-                (width - wall, height), (width - wall, wall), (wall, wall),
-                (wall, height), (0.0, height)]
-    segments = list(zip(vertices, vertices[1:]))
+    right = width - wall
+    support = section.support_height
+    outer = [(0.0, height), (0.0, 0.0), (width, 0.0), (width, height),
+             (right, height), (right, support), (wall, support),
+             (wall, height), (0.0, height)]
+    boundaries = [outer]
     if section.is_ladder:
-        step = section.support_height
-        segments.append(((wall, step), (width - wall, step)))
-    return segments
+        under_step = support - wall
+        boundaries.append([(wall, wall), (wall, under_step), (right, under_step),
+                           (right, wall), (wall, wall)])
+    return boundaries
 
 
 def group_legend(cables, use_group_names=False):

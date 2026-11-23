@@ -20,6 +20,9 @@ from .workbook import read_sheets
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+_TEXT_TYPE = u'SMNX_2.2'
+_REGION_TYPE = u'ADSK_У_Сплошная_Серая'
+_PICK_INSTRUCTION = u'После нажатия «Построить» укажите наружный нижний левый угол лотка.'
 
 
 def _read(filename):
@@ -27,26 +30,43 @@ def _read(filename):
         return stream.read()
 
 
+def _load_window(filename):
+    return XamlReader.Parse(_read(filename).replace('__VM_STYLE__', _read('vm_style.xaml')))
+
+
+def _preferred_type(types, saved, default):
+    if saved in types:
+        return saved
+    return default if default in types else None
+
+
 def mm(value):
     return u'{:.2f}'.format(value).rstrip(u'0').rstrip(u'.').replace(u'.', u',')
 
 
 class TraySectionDialog(object):
-    def __init__(self, view_name, owner, resolve_resources):
-        self.window = XamlReader.Parse(_read('tray_section.xaml').replace(
-            '__VM_STYLE__', _read('vm_style.xaml')))
+    def __init__(self, view_name, owner, resolve_symbol, style_types, config, save_config):
+        self.window = _load_window('tray_section.xaml')
         if owner:
             WindowInteropHelper(self.window).Owner = owner
-        for name in ('section_view', 'browse', 'file_path', 'sheets', 'use_group_names',
+        for name in ('section_view', 'gear', 'browse', 'file_path', 'sheets', 'use_group_names',
                      'summary', 'status', 'build'):
             setattr(self, name, self.window.FindName(name))
         self.section_view.Text = view_name
         self.default_status_color = self.status.Foreground
-        self.resolve_resources = resolve_resources
+        self.resolve_symbol = resolve_symbol
+        self.text_types, self.region_types = style_types
+        self.config = config
+        self.save_config = save_config
+        self.text_type = _preferred_type(
+            self.text_types, config.get_option('text_type', _TEXT_TYPE), _TEXT_TYPE)
+        self.region_type = _preferred_type(
+            self.region_types, config.get_option('region_type', _REGION_TYPE), _REGION_TYPE)
         self.sources = []
         self.section = None
         self.result = None
         self.browse.Click += self._browse
+        self.gear.Click += self._settings
         self.sheets.SelectionChanged += self._select
         self.build.Click += self._build
         self.window.Loaded += self._focus
@@ -57,6 +77,55 @@ class TraySectionDialog(object):
     def _status(self, message, error=False):
         self.status.Text = message
         self.status.Foreground = Brushes.Firebrick if error else self.default_status_color
+
+    def _edit_styles(self):
+        window = _load_window('tray_styles.xaml')
+        window.Owner = self.window
+        text = window.FindName('text_types')
+        region = window.FindName('region_types')
+        save = window.FindName('save')
+        for combo, types, selected in ((text, self.text_types, self.text_type),
+                                       (region, self.region_types, self.region_type)):
+            names = sorted(types, key=lambda name: name.lower())
+            combo.ItemsSource = Array[String](names)
+            combo.SelectedIndex = names.index(selected) if selected in types else -1
+            combo.IsEnabled = bool(names)
+
+        missing = []
+        if not self.text_types:
+            missing.append(u'текстовых примечаний')
+        if not self.region_types:
+            missing.append(u'цветовых областей')
+        if missing:
+            window.FindName('message').Text = u'Добавьте в проект типы {}.'.format(
+                u' и '.join(missing))
+
+        def refresh(sender, args):
+            save.IsEnabled = text.SelectedIndex >= 0 and region.SelectedIndex >= 0
+
+        def accept(sender, args):
+            if save.IsEnabled:
+                window.DialogResult = True
+
+        text.SelectionChanged += refresh
+        region.SelectionChanged += refresh
+        save.Click += accept
+        first = region if self.text_type and not self.region_type else text
+        window.Loaded += lambda sender, args: first.Focus()
+        refresh(None, None)
+        if window.ShowDialog() != True:
+            return False
+        self.text_type, self.region_type = text.SelectedItem, region.SelectedItem
+        self.config.text_type, self.config.region_type = self.text_type, self.region_type
+        self.save_config()
+        return True
+
+    def _settings(self, sender, args):
+        try:
+            if self._edit_styles() and self.section and not self.section.errors:
+                self._status(_PICK_INSTRUCTION)
+        except Exception as error:
+            self._status(u'{}'.format(error), True)
 
     def _browse(self, sender, args):
         picker = OpenFileDialog()
@@ -104,14 +173,18 @@ class TraySectionDialog(object):
             return
         self.summary.Text = u'{}   ·   Кабелей: {}   ·   Заполнение: {}'.format(
             dimensions, section.count, fill_label(section.fill_percent))
-        self._status(u'После нажатия «Построить» укажите наружный нижний левый угол лотка.')
+        self._status(_PICK_INSTRUCTION)
         self.build.IsEnabled = True
 
     def _build(self, sender, args):
         if self.section is None or self.section.errors:
             return
         try:
-            resources = self.resolve_resources()
+            if self.text_type is None or self.region_type is None:
+                if not self._edit_styles():
+                    return
+            resources = (self.resolve_symbol(), self.region_types[self.region_type],
+                         self.text_types[self.text_type])
             layout = plan_layout(self.section)
             legend = group_legend(layout.cables, self.use_group_names.IsChecked == True)
         except Exception as error:

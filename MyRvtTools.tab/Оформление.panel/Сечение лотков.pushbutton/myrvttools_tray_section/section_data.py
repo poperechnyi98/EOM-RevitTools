@@ -15,7 +15,7 @@ LADDER_STEP = 19.0
 
 
 class Section(namedtuple('Section', 'name width height required_width lines bundles errors '
-                         'count is_ladder fill_percent')):
+                         'count is_ladder fill_percent is_fire_resistant')):
     __slots__ = ()
 
     @property
@@ -23,8 +23,10 @@ class Section(namedtuple('Section', 'name width height required_width lines bund
         return LADDER_STEP if self.is_ladder else TRAY_THICKNESS
 
 
-Source = namedtuple('Source', 'sheet header width_row height_row required_row type_row fill_row')
+Source = namedtuple('Source', 'sheet header width_row height_row required_row type_row fill_row '
+                    'cable_type_row')
 BUNDLE_METHOD = u'П'
+_FIRE_RESISTANT_MARKS = (u'FRLF', u'FRLS', u'FRHF')
 _BUNDLE_TITLE = re.compile(u'пучок\\s*№\\s*(\\d+)', re.IGNORECASE)
 _HEADERS = (('D', u'кол-во кл'), ('E', u'кол-во кабел'),
             ('F', u'кол-во жил'), ('H', u'сечение'), ('I', u'одного кабеля'),
@@ -52,14 +54,14 @@ def recognize(sheet):
         label = _norm(row.get('A'))
         for key, title in (('width', u'ширина лотка'), ('height', u'высота лотка'),
                            ('required', u'треб. ширина'), ('type', u'тип лотка'),
-                           ('fill', u'заполняемость')):
+                           ('fill', u'заполняемость'), ('cable_type', u'тип кабеля')):
             if label.startswith(title):
                 labels.setdefault(key, number)
         if header is None and all(text in _norm(row.get(col)) for col, text in _HEADERS):
             header = number
     if header and 'width' in labels and 'height' in labels:
         return Source(sheet, header, labels['width'], labels['height'], labels.get('required'),
-                      labels.get('type'), labels.get('fill'))
+                      labels.get('type'), labels.get('fill'), labels.get('cable_type'))
     return None
 
 
@@ -232,6 +234,8 @@ class _SheetParser(object):
         height = self.number(source.height_row, 'B', rows[source.height_row])
         is_ladder = self.tray_kind()
         fill_percent = self.tray_fill()
+        cable_type = _norm(rows.get(source.cable_type_row, {}).get('B')).upper()
+        is_fire_resistant = any(mark in cable_type for mark in _FIRE_RESISTANT_MARKS)
         if width is not None and width <= 2 * TRAY_THICKNESS:
             self.error(source.width_row, 'B', rows[source.width_row],
                        u'ширина лотка должна быть больше 3 мм')
@@ -253,7 +257,7 @@ class _SheetParser(object):
         if not count and not self.errors:
             self.errors.append(u'На листе нет кабелей для размещения.')
         return Section(source.sheet.name, width, height, required, self.lines, bundles,
-                       self.errors, count, is_ladder, fill_percent)
+                       self.errors, count, is_ladder, fill_percent, is_fire_resistant)
 
 
 def parse_section(source):

@@ -44,7 +44,9 @@ def run():
 
     try:
         dialog = TraySectionDialog(view.Name, uiapp.MainWindowHandle,
-                                   lambda: revit_host.find_resources(doc))
+                                   lambda: revit_host.find_symbol(doc),
+                                   revit_host.collect_style_types(doc),
+                                   script.get_config('eomlab_tray_section'), script.save_config)
         selected = dialog.show()
         if selected is None:
             return

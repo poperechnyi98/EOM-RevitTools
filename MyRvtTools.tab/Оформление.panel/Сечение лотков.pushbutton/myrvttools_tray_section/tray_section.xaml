@@ -18,10 +18,16 @@
     </Grid.RowDefinitions>
 
     <Border Style="{StaticResource Card}" Margin="0,0,0,8" Padding="12,9">
-      <StackPanel>
-        <TextBlock Text="Сечение лотков" Style="{StaticResource H1}"/>
-        <TextBlock x:Name="section_view" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,2,0,0"/>
-      </StackPanel>
+      <DockPanel>
+        <Button x:Name="gear" DockPanel.Dock="Right" Style="{StaticResource Icon}"
+                Width="34" Height="30" Margin="8,0,0,0" VerticalAlignment="Top"
+                FontSize="15" Content="&#xE713;" ToolTip="Типы оформления"
+                AutomationProperties.Name="Типы оформления"/>
+        <StackPanel>
+          <TextBlock Text="Сечение лотков" Style="{StaticResource H1}"/>
+          <TextBlock x:Name="section_view" Style="{StaticResource Hint}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+        </StackPanel>
+      </DockPanel>
     </Border>
 
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="12">

@@ -5,14 +5,14 @@ from math import pi, sqrt
 from Autodesk.Revit import DB
 from Autodesk.Revit.Exceptions import InvalidOperationException, OperationCanceledException
 from Autodesk.Revit.UI.Selection import ObjectSnapTypes
+from System.Collections.Generic import List
 
-from .layout import fill_label, tray_outline
+from .layout import cable_line_color, fill_label, tray_region_boundaries
 from .section_data import TRAY_THICKNESS
 
 FAMILY_NAME = u'SMNX_DC_э_Сечение кабеля'
 TITLE = u'Сечение лотков'
 _POSITION_PARAMETER = u'SMNX_Номер позиции'
-_TEXT_TYPE = u'SMNX_2.2'
 _PARAMETERS = ((u'Диаметр', 'diameter', DB.UnitTypeId.Millimeters),
                (u'Количество жил', 'cores', None),
                (u'Сечение проводника', 'section', DB.UnitTypeId.SquareMillimeters))
@@ -36,18 +36,13 @@ def find_symbol(doc):
     return min(named, key=lambda item: (item[0] != FAMILY_NAME, item[0]))[1]
 
 
-def find_resources(doc):
-    symbol = find_symbol(doc)
-    category = DB.Category.GetCategory(doc, DB.BuiltInCategory.OST_CurvesThinLines)
-    line_style = category.GetGraphicsStyle(DB.GraphicsStyleType.Projection) if category else None
-    if line_style is None:
-        raise ValueError(u'В проекте не найден стиль линий «<Тонкие линии>».')
-    text_types = DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType)
-    text_type = next((item for item in text_types
-                      if DB.Element.Name.GetValue(item) == _TEXT_TYPE), None)
-    if text_type is None:
-        raise ValueError(u'В проекте не найден тип текста «{}».'.format(_TEXT_TYPE))
-    return symbol, line_style, text_type.Id
+def collect_style_types(doc):
+    text_types = {DB.Element.Name.GetValue(item): item.Id
+                  for item in DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType)}
+    region_types = {DB.Element.Name.GetValue(item): item.Id
+                    for item in DB.FilteredElementCollector(doc).OfClass(DB.FilledRegionType)
+                    if not item.IsMasking}
+    return text_types, region_types
 
 
 def _pick(selection):
@@ -163,11 +158,14 @@ def _feet(mm):
     return DB.UnitUtils.ConvertToInternalUnits(mm, DB.UnitTypeId.Millimeters)
 
 
-def _draw_tray(doc, view, point, section, line_style, text_type, legend):
-    for start, end in tray_outline(section):
-        line = DB.Line.CreateBound(point(*start), point(*end))
-        detail = doc.Create.NewDetailCurve(view, line)
-        detail.LineStyle = line_style
+def _draw_tray(doc, view, point, section, region_type, text_type, legend):
+    boundaries = List[DB.CurveLoop]()
+    for vertices in tray_region_boundaries(section):
+        loop = DB.CurveLoop()
+        for start, end in zip(vertices, vertices[1:]):
+            loop.Append(DB.Line.CreateBound(point(*start), point(*end)))
+        boundaries.Add(loop)
+    DB.FilledRegion.Create(doc, region_type, view.Id, boundaries)
 
     paper_gap = 2.0 * view.Scale
     percent_options = DB.TextNoteOptions(text_type)
@@ -182,7 +180,7 @@ def _draw_tray(doc, view, point, section, line_style, text_type, legend):
 
 
 def place(doc, view, origin, section, layout, resources, legend):
-    symbol, line_style, text_type = resources
+    symbol, region_type, text_type = resources
     direction = view.RightDirection
     up = view.UpDirection
 
@@ -195,7 +193,7 @@ def place(doc, view, origin, section, layout, resources, legend):
         if not symbol.IsActive:
             symbol.Activate()
             doc.Regenerate()
-        _draw_tray(doc, view, point, section, line_style, text_type, legend)
+        _draw_tray(doc, view, point, section, region_type, text_type, legend)
         instances = []
         for item in layout.cables:
             target = point(item.x + TRAY_THICKNESS, item.y + section.support_height)
@@ -203,6 +201,11 @@ def place(doc, view, origin, section, layout, resources, legend):
             for name, field, units in _PARAMETERS:
                 _set_parameter(instance, name, getattr(item.cable, field), units)
             _set_position(instance, item.position)
+            rgb = cable_line_color(item, section.is_fire_resistant)
+            if rgb is not None:
+                graphics = DB.OverrideGraphicSettings()
+                graphics.SetProjectionLineColor(DB.Color(*rgb))
+                view.SetElementOverrides(instance.Id, graphics)
             instances.append((instance, item.cable, target))
         doc.Regenerate()
 
