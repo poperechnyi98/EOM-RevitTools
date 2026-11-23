@@ -1,0 +1,126 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Координационные виды" Width="1320" Height="820"
+        MinWidth="980" MinHeight="620" WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False" ResizeMode="CanResizeWithGrip" Background="#F3F5F7">
+  <Window.Resources>__VM_STYLE__</Window.Resources>
+  <Grid>
+  <Grid.RowDefinitions>
+    <RowDefinition Height="Auto"/>
+    <RowDefinition Height="*"/>
+    <RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+
+  <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,10">
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="Координационные виды" Style="{StaticResource H1}"/>
+        <TextBlock x:Name="context_label" Style="{StaticResource Hint}" Margin="0,4,0,0"/>
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <Button x:Name="load_profile_button" Content="Импорт профиля" Margin="4,0,4,0"/>
+        <Button x:Name="save_profile_button" Content="Экспорт профиля"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+
+  <Grid x:Name="config_area" Grid.Row="1">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="300"/>
+      <ColumnDefinition Width="8"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0" Style="{StaticResource Card}">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top">
+          <Grid Margin="0,0,0,6">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="Связи" Style="{StaticResource H2}" VerticalAlignment="Center"/>
+            <Button x:Name="group_button" Grid.Column="1" Content="Группы" Padding="8,3" ToolTip="Назначить группу выбранной связи"/>
+          </Grid>
+          <TextBox x:Name="link_search_box" ToolTip="Поиск по названию связи: часть слова, несколько слов или другой раскладкой"/>
+          <ComboBox x:Name="group_filter" Margin="0,6,0,0" ToolTip="Показать группу"/>
+          <CheckBox x:Name="configured_only_box" Content="Только настроенные" Margin="0,6,0,0"
+                    ToolTip="Показывать только связи, для которых уже выбран координационный вид"/>
+          <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
+            <Button x:Name="expand_all_button" Content="Развернуть" Padding="7,3" Margin="0,0,4,0"/>
+            <Button x:Name="collapse_all_button" Content="Свернуть" Padding="7,3"/>
+          </StackPanel>
+        </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+          <StackPanel x:Name="links_panel"/>
+        </ScrollViewer>
+      </DockPanel>
+    </Border>
+
+    <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"
+                  Background="Transparent" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
+                  ShowsPreview="True"/>
+
+    <Border Grid.Column="2" Style="{StaticResource Card}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="190" MinHeight="120"/>
+          <RowDefinition Height="7"/>
+          <RowDefinition Height="*" MinHeight="220"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <TextBlock Text="Настроено на активном виде" Style="{StaticResource H2}"/>
+              <TextBlock x:Name="configured_count_label" Grid.Column="1" Style="{StaticResource Hint}" VerticalAlignment="Center"/>
+            </Grid>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,5,0,0">
+              <StackPanel x:Name="configured_panel"/>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+
+        <GridSplitter Grid.Row="1" Height="7" HorizontalAlignment="Stretch"
+                      Background="Transparent" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
+                      ShowsPreview="True" ToolTip="Изменить высоту списка настроенных видов"/>
+
+        <Grid Grid.Row="2">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+          <StackPanel Grid.Row="0">
+            <TextBlock x:Name="selected_link_label" Text="Выберите связь" Style="{StaticResource H2}"/>
+            <TextBlock Text="Для одной связи выбирается один координационный вид" Style="{StaticResource Hint}" Margin="0,3,0,6"/>
+            <TextBox x:Name="view_search_box" ToolTip="Поиск по названию вида: часть слова, несколько слов или другой раскладкой"/>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
+              <Button x:Name="view_all_on_button" Content="Выбрать вид" Padding="7,3" Margin="0,0,4,0"/>
+              <Button x:Name="view_clear_button" Content="Очистить" Padding="7,3"/>
+            </StackPanel>
+          </StackPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+            <StackPanel x:Name="views_panel"/>
+          </ScrollViewer>
+        </Grid>
+      </Grid>
+    </Border>
+
+  </Grid>
+  <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,10,0,0" Padding="12,8,12,12">
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock x:Name="status_label" Style="{StaticResource Hint}" Margin="0,4,0,0"/>
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
+        <Button x:Name="cancel_button" Content="Отмена" Margin="0,0,6,0"/>
+        <Button x:Name="apply_button" Content="Применить" Style="{StaticResource Primary}"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Grid>
+</Window>

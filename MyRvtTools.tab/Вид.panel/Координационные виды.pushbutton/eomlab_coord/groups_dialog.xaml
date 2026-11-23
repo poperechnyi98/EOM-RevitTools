@@ -1,0 +1,45 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Группы связей" Width="1080" Height="700"
+        MinWidth="820" MinHeight="520" WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False" Background="#F3F5F7">
+  <Window.Resources>__VM_STYLE__</Window.Resources>
+  <DockPanel>
+    <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#D5DBE1" BorderThickness="0,1,0,0" Padding="16,10">
+      <DockPanel LastChildFill="False">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button x:Name="ok_button" Content="Сохранить" Style="{StaticResource Primary}" MinWidth="100" Margin="0,0,8,0" IsDefault="True"/>
+          <Button x:Name="cancel_button" Content="Отмена" MinWidth="90" IsCancel="True"/>
+        </StackPanel>
+        <TextBlock x:Name="footer_hint" DockPanel.Dock="Left" Style="{StaticResource Hint}" VerticalAlignment="Center" MaxWidth="720"/>
+      </DockPanel>
+    </Border>
+    <StackPanel DockPanel.Dock="Top" Margin="16,14,16,0">
+      <TextBlock Text="Группы связей" Style="{StaticResource H1}"/>
+      <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,0" Text="Перетащите связи из списка в карточки групп. Ctrl и Shift позволяют выбрать несколько связей."/>
+    </StackPanel>
+    <Grid Margin="16,8,16,12">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="370"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border Grid.Column="0" Style="{StaticResource Card}">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top">
+            <DockPanel><TextBlock x:Name="left_count" DockPanel.Dock="Right" Style="{StaticResource Hint}"/><TextBlock Text="Связи" Style="{StaticResource H2}"/></DockPanel>
+            <TextBox x:Name="search_box" Margin="0,8,0,6" ToolTip="Фильтр по названию связи"/>
+            <CheckBox x:Name="only_free_box" Content="Только без группы" Margin="0,0,0,6"/>
+          </StackPanel>
+          <TextBlock x:Name="left_hint" DockPanel.Dock="Bottom" Style="{StaticResource Hint}" Margin="0,8,0,0" Text="Двойной щелчок добавляет выбранные связи в активную группу."/>
+          <ListBox x:Name="link_list" AllowDrop="True"/>
+        </DockPanel>
+      </Border>
+      <Border Grid.Column="2" Style="{StaticResource Card}">
+        <DockPanel>
+          <DockPanel DockPanel.Dock="Top" LastChildFill="False" Margin="0,0,0,8">
+            <Button x:Name="new_group_button" DockPanel.Dock="Left" Content="+ Новая группа"/>
+            <TextBlock Text="Перетаскивание связей" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+          </DockPanel>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="cards_panel"/></ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>
